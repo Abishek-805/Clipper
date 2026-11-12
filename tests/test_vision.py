@@ -126,6 +126,7 @@ class VisionTests(unittest.TestCase):
         ready = {"missing_dependencies": [], "torch_missing": False, "weights_verified": True,
                  "ready": True, "device": "CPU fallback", "snapshot": "local"}
         with patch.object(main, "collect_diagnostics", return_value={"cuda_devices": 0}), \
+             patch.object(main, "gpu_memory_usage", return_value=None), \
              patch.object(main.ClippingApp, "after", return_value=None, create=True), \
              patch.object(main.messagebox, "askyesno", return_value=True), \
              patch.object(main.subprocess, "Popen", return_value=Process()) as popen, \

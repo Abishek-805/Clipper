@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import csv
 import json
 import os
 import queue
@@ -11,10 +10,12 @@ import tkinter as tk
 from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 
-from clipper import process_video, scan_videos
+from clipper import scan_videos
 from diagnostics import collect_diagnostics
-from model_manager import ModelManager
+from model_manager import ModelManager, gpu_memory_usage
 from vision import VisionModelManager, vision_installation_status
+from nightly_queue import QueueStore, normalized_source_path
+from queue_runner import NightlySessionRunner
 
 APP_DIR = Path(__file__).resolve().parent
 OUTPUT = APP_DIR / "Shorts_Output"
@@ -37,6 +38,14 @@ def _write_json(path: Path, data):
     temporary.replace(path)
 
 
+def _whisper_model_cached(model_size: str) -> bool:
+    try:
+        from faster_whisper.utils import download_model
+        return Path(download_model(model_size, local_files_only=True)).is_dir()
+    except Exception:
+        return False
+
+
 class ClippingApp(tk.Tk):
     def __init__(self):
         super().__init__()
@@ -54,25 +63,30 @@ class ClippingApp(tk.Tk):
         self.model = tk.StringVar(value="small")
         self.encoder = tk.StringVar(value="auto")
         self.semantic = tk.BooleanVar(value=False)
+        self.target = tk.IntVar(value=5)
+        self.max_hours = tk.IntVar(value=6)
+        self.batch_size = tk.IntVar(value=2)
         self.diagnostics = collect_diagnostics()
+        self.gpu_memory = gpu_memory_usage()
         self.status = tk.StringVar(value="Select a folder containing videos to begin.")
         self.detected = tk.StringVar(value="0 videos detected")
         self.model_status = tk.StringVar(value="Whisper small · unloaded · CUDA available" if self.diagnostics.get("cuda_devices") else "Whisper small · unloaded · CPU int8 fallback")
         self.vision_status = tk.StringVar(value=self._vision_setup_text(vision_installation_status()))
         self.model.trace_add("write", lambda *_: self.model_status.set(f"Whisper {self.model.get()} · unloaded · load only after Start"))
         self.queue: queue.Queue = queue.Queue()
-        self.cancel_event: threading.Event | None = None
+        self.runner: NightlySessionRunner | None = None
+        try:
+            self.queue_store = QueueStore(APP_STATE / "queue.sqlite3")
+        except Exception as exc:
+            self.queue_store = None
+            self.queue_error = str(exc)
+        else:
+            self.queue_error = ""
         self.running = False
         self.close_when_finished = False
-        self.resume_job: dict | None = None
         self.protocol("WM_DELETE_WINDOW", self._on_close)
         self._build()
         self.after(150, self._poll)
-        job = _read_json(INTERRUPTED_JOB)
-        if isinstance(job, dict) and job.get("status") in ("running", "interrupted"):
-            job["status"] = "interrupted"
-            _write_json(INTERRUPTED_JOB, job)
-            self.after_idle(lambda: self._offer_resume(job))
 
     def _build(self):
         style = ttk.Style(self)
@@ -91,7 +105,8 @@ class ClippingApp(tk.Tk):
         ttk.Label(root, text="Local analysis · vertical Shorts · originals stay untouched", style="Sub.TLabel").pack(anchor="w", pady=(4, 22))
         row = ttk.Frame(root)
         row.pack(fill="x")
-        ttk.Button(row, text="Select Video Folder", command=self._select).pack(side="left")
+        self.select_button = ttk.Button(row, text="Select Video Folder", command=self._select)
+        self.select_button.pack(side="left")
         ttk.Label(row, textvariable=self.detected, style="Sub.TLabel").pack(side="right", padx=4)
         ttk.Label(root, textvariable=self.folder, style="Sub.TLabel").pack(anchor="w", fill="x", pady=(9, 12))
         advanced = ttk.LabelFrame(root, text=" Output defaults ", padding=(12, 7))
@@ -110,14 +125,34 @@ class ClippingApp(tk.Tk):
         ttk.Label(encoder_frame, text="Video encoder", style="Sub.TLabel").pack(anchor="w")
         ttk.Combobox(encoder_frame, textvariable=self.encoder, values=("auto", "libx264", "h264_nvenc"), width=11, state="readonly").pack(anchor="w", pady=(4, 0))
         ttk.Checkbutton(advanced, text="Enable optional local semantic scene analysis", variable=self.semantic).pack(side="left", padx=10, pady=(14, 0))
+        nightly = ttk.LabelFrame(root, text=" Nightly queue ", padding=(12, 7))
+        nightly.pack(fill="x", pady=(0, 12))
+        for label, variable, upper in (("Shorts this session", self.target, 10), ("Max hours", self.max_hours, 24), ("Microbatch", self.batch_size, 4)):
+            item = ttk.Frame(nightly)
+            item.pack(side="left", padx=(2, 15))
+            ttk.Label(item, text=label, style="Sub.TLabel").pack(anchor="w")
+            ttk.Spinbox(item, from_=1, to=upper, textvariable=variable, width=6).pack(anchor="w", pady=(4, 0))
+        self.queue_summary = tk.StringVar(value="Queue is ready" if self.queue_store else f"Queue unavailable · {self.queue_error}")
+        ttk.Label(nightly, textvariable=self.queue_summary, style="Sub.TLabel").pack(side="left", padx=8)
         controls = ttk.Frame(root)
         controls.pack(fill="x", pady=(0, 12))
-        self.start_button = ttk.Button(controls, text="Start Automatic Clipping", style="Accent.TButton", command=self._start)
+        self.start_button = ttk.Button(controls, text="Start Nightly Run", style="Accent.TButton", command=self._start)
         self.start_button.pack(side="left")
-        self.cancel_button = ttk.Button(controls, text="Cancel Processing", command=self._cancel, state="disabled")
-        self.cancel_button.pack(side="left", padx=8)
+        self.pause_button = ttk.Button(controls, text="Pause", command=self._toggle_pause, state="disabled")
+        self.pause_button.pack(side="left", padx=8)
+        self.cancel_button = ttk.Button(controls, text="Stop Safely", command=self._cancel, state="disabled")
+        self.cancel_button.pack(side="left")
+        self.rescan_button = ttk.Button(controls, text="Rescan Queue", command=self._rescan)
+        self.rescan_button.pack(side="left", padx=8)
         ttk.Button(controls, text="Open Output Folder", command=self._open_output).pack(side="right")
         ttk.Button(controls, text="Set Up Vision Model", command=self._setup_vision).pack(side="right", padx=8)
+        queue_tools = ttk.Frame(root)
+        queue_tools.pack(fill="x", pady=(0, 8))
+        ttk.Button(queue_tools, text="View Queue", command=self._view_queue).pack(side="left")
+        self.retry_button = ttk.Button(queue_tools, text="Retry Failures", command=self._retry_failures)
+        self.retry_button.pack(side="left", padx=8)
+        self.reprocess_button = ttk.Button(queue_tools, text="Reprocess Changed", command=self._reprocess_changed)
+        self.reprocess_button.pack(side="left")
         self.progress = ttk.Progressbar(root, mode="determinate", maximum=100)
         self.progress.pack(fill="x", pady=(4, 8))
         ttk.Label(root, textvariable=self.status, style="Sub.TLabel").pack(anchor="w", pady=(0, 9))
@@ -125,9 +160,10 @@ class ClippingApp(tk.Tk):
         ttk.Label(root, textvariable=self.vision_status, style="Sub.TLabel").pack(anchor="w", pady=(0, 5))
         gpu = self.diagnostics.get("gpu_name") or "NVIDIA GPU not detected"
         cuda = "CUDA transcription available" if self.diagnostics.get("cuda_devices") else "CPU transcription fallback"
+        memory = f" · VRAM {self.gpu_memory['free_mib']}/{self.gpu_memory['total_mib']} MiB free" if self.gpu_memory else ""
         encoders = self.diagnostics.get("encoders", {})
         render = "NVENC verified" if encoders.get("h264_nvenc") else "libx264 verified" if encoders.get("libx264") else "H.264 encoder unavailable"
-        ttk.Label(root, text=f"Runtime · {gpu} · {cuda} · {render}", style="Sub.TLabel").pack(anchor="w", pady=(0, 8))
+        ttk.Label(root, text=f"Runtime · {gpu}{memory} · {cuda} · {render}", style="Sub.TLabel").pack(anchor="w", pady=(0, 8))
         ttk.Label(root, text="Processing log", style="Sub.TLabel").pack(anchor="w")
         self.log = tk.Text(root, bg="#0b0e14", fg="#c9d3e2", insertbackground="white", relief="flat", font=("Cascadia Mono", 9), wrap="word", height=14, state="disabled")
         self.log.pack(fill="both", expand=True, pady=(7, 0))
@@ -139,43 +175,65 @@ class ClippingApp(tk.Tk):
         self.log.configure(state="disabled")
 
     def _select(self):
+        if self.running:
+            return
         folder = filedialog.askdirectory(title="Select your video folder")
         if folder:
             self.folder.set(folder)
             _write_json(PREFERENCES, {"last_folder": folder})
             videos = scan_videos(Path(folder), OUTPUT)
             self.detected.set(f"{len(videos)} video{'s' if len(videos) != 1 else ''} detected")
+            self._rescan()
 
-    def _offer_resume(self, job: dict):
-        folder_value = job.get("folder")
-        videos = job.get("videos")
-        if not isinstance(folder_value, str) or not isinstance(videos, list):
+    def _rescan(self):
+        if self.running:
             return
-        folder = Path(folder_value)
-        if not folder.is_dir():
+        if not self.folder.get() or not Path(self.folder.get()).is_dir():
             return
-        completed = {path for path in job.get("completed", []) if isinstance(path, str)} if isinstance(job.get("completed", []), list) else set()
-        if not any(isinstance(path, str) and path not in completed and Path(path).is_file() for path in videos):
-            INTERRUPTED_JOB.unlink(missing_ok=True)
+        videos = scan_videos(Path(self.folder.get()), OUTPUT)
+        self.detected.set(f"{len(videos)} video{'s' if len(videos) != 1 else ''} detected")
+        if self.queue_store:
+            self.queue_store.scan(Path(self.folder.get()), videos)
+            counts = self.queue_store.counts(Path(self.folder.get()))
+            self.queue_summary.set("Queue · " + " · ".join(f"{state.lower()} {count}" for state, count in counts.items() if count))
+
+    def _retry_failures(self):
+        if self.running or not self.queue_store:
             return
-        job["videos"] = [path for path in videos if isinstance(path, str)]
-        job["completed"] = sorted(completed)
-        if messagebox.askyesno(
-            "Interrupted job found",
-            "An earlier clipping job did not finish. Prepare it to resume? Completed clips will be kept; click Start Automatic Clipping to continue.",
-            parent=self,
-        ):
-            self.folder.set(str(folder))
-            settings = job.get("settings", [])
-            if len(settings) in (5, 6):
-                self.model.set(settings[0])
-                self.count.set(settings[1])
-                self.minimum.set(settings[2])
-                self.maximum.set(settings[3])
-                self.encoder.set(settings[4])
-                self.semantic.set(bool(settings[5]) if len(settings) > 5 else False)
-            self.resume_job = job
-            self.status.set("Interrupted job ready · click Start Automatic Clipping to resume")
+        root = Path(self.folder.get()).resolve(strict=False)
+        failed = [row for row in self.queue_store.episodes({"FAILED_RETRYABLE", "FAILED_FINAL"})
+                  if Path(row["path"]).resolve(strict=False).is_relative_to(root)]
+        if not failed:
+            messagebox.showinfo("No failed episodes", "There are no failed episodes to retry.", parent=self)
+            return
+        if messagebox.askyesno("Retry failed episodes?", f"Return {len(failed)} failed episode(s) to the pending queue?", parent=self):
+            for episode in failed:
+                self.queue_store.retry_episode(episode["id"])
+            self._rescan()
+
+    def _view_queue(self):
+        if not self.queue_store:
+            return
+        root = Path(self.folder.get()).resolve(strict=False) if self.folder.get() else None
+        rows = [row for row in self.queue_store.episodes()
+                if root is None or Path(row["path"]).resolve(strict=False).is_relative_to(root)]
+        text = "\n".join(f"{row['status']:<18} {row['filename']}" +
+                         (f" · {row['last_error']}" if row["last_error"] else "") for row in rows)
+        messagebox.showinfo("Nightly queue", text or "The queue is empty.", parent=self)
+
+    def _reprocess_changed(self):
+        if self.running or not self.queue_store:
+            return
+        root = Path(self.folder.get()).resolve(strict=False)
+        changed = [row for row in self.queue_store.episodes({"SOURCE_CHANGED"})
+                   if Path(row["path"]).resolve(strict=False).is_relative_to(root)]
+        if not changed:
+            messagebox.showinfo("No changed sources", "No source changes need reprocessing.", parent=self)
+            return
+        if messagebox.askyesno("Reprocess changed sources?", f"Reprocess {len(changed)} changed source(s)? Previous output files will be retained.", parent=self):
+            for episode in changed:
+                self.queue_store.requeue_source_changed(episode["id"])
+            self._rescan()
 
     def _start(self):
         if self.running:
@@ -193,83 +251,99 @@ class ClippingApp(tk.Tk):
         if not any(self.diagnostics.get("encoders", {}).values()):
             messagebox.showerror("H.264 encoder unavailable", "This FFmpeg build has no verified H.264 encoder. Install a build with libx264 or h264_nvenc.")
             return
-        resume_job = self.resume_job
-        if resume_job:
-            completed_values = resume_job.get("completed", [])
-            completed = {path for path in completed_values if isinstance(path, str)} if isinstance(completed_values, list) else set()
-            videos = [Path(path) for path in resume_job.get("videos", []) if isinstance(path, str) and path not in completed and Path(path).is_file()]
-        else:
-            videos = scan_videos(Path(self.folder.get()), OUTPUT)
+        faster_whisper = next((item for item in self.diagnostics["checks"] if item["name"] == "Faster-Whisper"), {})
+        transcription_enabled = faster_whisper.get("status") == "available"
+        if faster_whisper.get("status") != "available" and not messagebox.askyesno(
+                "Speech recognition unavailable",
+                "Faster-Whisper is not installed. Continue with audio and visual heuristics only? No package will be installed by Clipper.", parent=self):
+            return
+        if transcription_enabled and not _whisper_model_cached(self.model.get()):
+            if not messagebox.askyesno("Whisper model unavailable",
+                                       f"The {self.model.get()} model is not cached. Continue in heuristic-only mode without speech recognition? Clipper will not download model weights during this run.",
+                                       parent=self):
+                return
+            transcription_enabled = False
+        if self.semantic.get() and not vision_installation_status().get("ready"):
+            if not messagebox.askyesno("Vision model unavailable",
+                                       "The optional local vision model is not ready. Continue in heuristic-only mode? Clipper will disable semantic analysis for this run.",
+                                       parent=self):
+                return
+            self.semantic.set(False)
+        if not self.queue_store:
+            messagebox.showerror("Queue unavailable", self.queue_error, parent=self)
+            return
+        videos = scan_videos(Path(self.folder.get()), OUTPUT)
         if not videos:
             messagebox.showinfo("No videos found", "This folder contains no supported video files.")
             return
-        if self.count.get() < 1 or self.minimum.get() < 1 or self.maximum.get() < self.minimum.get():
-            messagebox.showerror("Invalid clip length", "Maximum seconds must be at least the minimum.")
+        if (self.count.get() < 1 or self.minimum.get() < 1 or self.maximum.get() < self.minimum.get() or
+                not 1 <= self.target.get() <= 10 or not 1 <= self.max_hours.get() <= 24 or
+                not 1 <= self.batch_size.get() <= 4):
+            messagebox.showerror("Invalid settings", "Check clip duration, target (1–10), session hours (1–24), and microbatch (1–4).")
             return
+        self.queue_store.scan(Path(self.folder.get()), videos)
+        self._import_legacy_interrupted_job()
+        interrupted = self.queue_store.has_interrupted(Path(self.folder.get()))
+        resume_interrupted = False
+        if interrupted:
+            resume_interrupted = messagebox.askyesno(
+                "Resume interrupted queue?",
+                "This folder has interrupted episodes. Resume them in this nightly run? Completed, validated clips will be retained.",
+                parent=self)
         self.running = True
-        self.cancel_event = threading.Event()
-        self.progress.configure(value=0, maximum=len(videos))
+        self.progress.configure(value=0, maximum=self.target.get())
+        self.select_button.configure(state="disabled")
+        self.rescan_button.configure(state="disabled")
+        self.retry_button.configure(state="disabled")
+        self.reprocess_button.configure(state="disabled")
         self.start_button.configure(state="disabled")
+        self.pause_button.configure(text="Pause", state="normal")
         self.cancel_button.configure(state="normal")
+        if not transcription_enabled:
+            self.model_status.set("Whisper unavailable · heuristic-only for this run · no download")
         settings = (self.model.get(), self.count.get(), self.minimum.get(), self.maximum.get(), self.encoder.get(), self.semantic.get())
         _write_json(PREFERENCES, {"last_folder": self.folder.get()})
-        job = resume_job or {"folder": self.folder.get(), "videos": [str(path) for path in videos], "completed": [], "settings": settings}
-        job["status"] = "running"
-        _write_json(INTERRUPTED_JOB, job)
-        self.resume_job = None
-        threading.Thread(target=self._worker, args=(videos, settings, job), daemon=True).start()
-
-    def _worker(self, videos: list[Path], settings: tuple, job: dict):
-        rows = []
-        done = 0
-        completed = set(job.get("completed", []))
-        OUTPUT.mkdir(parents=True, exist_ok=True)
-        def log(message: str):
-            with (OUTPUT / "processing.log").open("a", encoding="utf-8") as f:
-                f.write(message.rstrip() + "\n")
+        def progress(message):
+            OUTPUT.mkdir(parents=True, exist_ok=True)
+            with (OUTPUT / "processing.log").open("a", encoding="utf-8") as log_file:
+                log_file.write(message.rstrip() + "\n")
             self.queue.put(("log", message))
-        def progress(message: str):
-            log(message)
             self.queue.put(("status", message))
-        manager = ModelManager(settings[0], status_callback=lambda value: self.queue.put(("model_status", value)))
-        vision = VisionModelManager(status_callback=lambda value: self.queue.put(("vision_status", value))) if len(settings) > 5 and settings[5] else None
+        manager = ModelManager(settings[0], local_files_only=True,
+                               status_callback=lambda value: self.queue.put(("model_status", value)))
+        vision = VisionModelManager(status_callback=lambda value: self.queue.put(("vision_status", value))) if settings[5] else None
+        self.runner = NightlySessionRunner(
+            self.queue_store, OUTPUT, *settings[:5], semantic_enabled=settings[5],
+            target=self.target.get(), max_seconds=self.max_hours.get() * 3600,
+            batch_size=self.batch_size.get(), resume_interrupted=resume_interrupted,
+            progress=progress, status=lambda value: self.queue.put(("queue_status", value)),
+            model_manager=manager, vision_manager=vision,
+            transcription_enabled=transcription_enabled)
+        threading.Thread(target=self._worker, args=(Path(self.folder.get()),), daemon=True).start()
+
+    def _worker(self, folder: Path):
         try:
-            for path in videos:
-                if self.cancel_event.is_set():
-                    break
-                try:
-                    n = process_video(path, OUTPUT, *settings[:4], self.cancel_event, progress, settings[4], manager,
-                                      bool(settings[5]) if len(settings) > 5 else False, vision)
-                    done += n
-                    rows.append((path.name, n, "completed"))
-                    completed.add(str(path))
-                    job["completed"] = sorted(completed)
-                    _write_json(INTERRUPTED_JOB, job)
-                except InterruptedError:
-                    rows.append((path.name, 0, "cancelled"))
-                    log(f"Cancelled · {path.name}")
-                    break
-                except Exception as exc:
-                    rows.append((path.name, 0, f"failed: {exc}"))
-                    log(f"ERROR · {path.name}: {exc}")
-                self.queue.put(("progress", videos.index(path) + 1))
-        finally:
-            manager.release_whisper()
-            if vision:
-                vision.release()
-        OUTPUT.mkdir(parents=True, exist_ok=True)
-        with (OUTPUT / "processing_report.csv").open("w", newline="", encoding="utf-8-sig") as f:
-            writer = csv.writer(f)
-            writer.writerow(("source", "clips_generated", "status"))
-            writer.writerows(rows)
-        interrupted = self.cancel_event.is_set() or any(status != "completed" for _, _, status in rows)
-        if interrupted:
-            job["status"] = "interrupted"
-            job["completed"] = sorted(completed)
-            _write_json(INTERRUPTED_JOB, job)
-        else:
-            INTERRUPTED_JOB.unlink(missing_ok=True)
-        self.queue.put(("finished", (done, len(videos), interrupted)))
+            result = self.runner.run(folder)
+            self.queue.put(("finished", result))
+        except Exception as exc:
+            self.queue.put(("failed", f"{type(exc).__name__}: {exc}"))
+
+    def _import_legacy_interrupted_job(self):
+        job = _read_json(INTERRUPTED_JOB)
+        if not self.queue_store or not isinstance(job, dict) or job.get("status") not in {"running", "interrupted"}:
+            return
+        folder_value, videos = job.get("folder"), job.get("videos")
+        if (not isinstance(folder_value, str) or normalized_source_path(Path(folder_value)) !=
+                normalized_source_path(Path(self.folder.get())) or not isinstance(videos, list)):
+            return
+        paths = [Path(value) for value in videos if isinstance(value, str) and Path(value).is_file()]
+        completed_values = job.get("completed", [])
+        completed = {normalized_source_path(Path(value)) for value in completed_values if isinstance(value, str)} if isinstance(completed_values, list) else set()
+        by_path = {row["path"]: row for row in self.queue_store.episodes()}
+        for path in paths:
+            row = by_path.get(normalized_source_path(path))
+            if row and normalized_source_path(path) not in completed and row["status"] == "PENDING":
+                self.queue_store.set_episode_status(row["id"], "INTERRUPTED", error="Imported from the previous interrupted-job ledger")
 
     def _poll(self):
         try:
@@ -281,6 +355,13 @@ class ClippingApp(tk.Tk):
                     self.progress.configure(value=value)
                 elif kind == "status":
                     self.status.set(value)
+                elif kind == "queue_status":
+                    prepared = value["clips_prepared"]
+                    self.progress.configure(value=min(prepared, value["target"]))
+                    remaining = value["time_left_seconds"]
+                    elapsed = value["elapsed_seconds"]
+                    self.status.set(f"Nightly queue · {prepared}/{value['target']} Shorts · elapsed {elapsed // 3600}h {(elapsed % 3600) // 60}m · {remaining // 3600}h {(remaining % 3600) // 60}m left")
+                    self.queue_summary.set("Queue · " + " · ".join(f"{state.lower()} {count}" for state, count in value["queue_counts"].items() if count))
                 elif kind == "model_status":
                     device = f"{value.get('device')} / {value.get('compute_type')}"
                     gpu = value.get("vram_after_load") or value.get("vram_before") or {}
@@ -302,24 +383,60 @@ class ClippingApp(tk.Tk):
                 elif kind == "finished":
                     self.running = False
                     self.start_button.configure(state="normal")
+                    self.select_button.configure(state="normal")
+                    self.rescan_button.configure(state="normal")
+                    self.retry_button.configure(state="normal")
+                    self.reprocess_button.configure(state="normal")
+                    self.pause_button.configure(state="disabled", text="Pause")
                     self.cancel_button.configure(state="disabled")
-                    self.status.set(f"{'Interrupted; resume requires confirmation' if value[2] else 'Finished'} · {value[0]} clips generated")
+                    session = value["session"]
+                    counts = value["queue_counts"]
+                    self.status.set(f"Nightly run {session['status'].lower()} · {value['clips_prepared']} Shorts · {value['episodes_processed']} episodes ({value['episodes_skipped']} skipped, {value['episodes_failed']} failed) · {counts.get('PENDING', 0)} pending")
                     self._log(self.status.get())
                     if self.close_when_finished:
+                        self._close_store()
                         self.destroy()
                         return
-                    elif value[2]:
-                        job = _read_json(INTERRUPTED_JOB)
-                        if isinstance(job, dict):
-                            self._offer_resume(job)
+                elif kind == "failed":
+                    self.running = False
+                    self.start_button.configure(state="normal")
+                    self.select_button.configure(state="normal")
+                    self.rescan_button.configure(state="normal")
+                    self.retry_button.configure(state="normal")
+                    self.reprocess_button.configure(state="normal")
+                    self.pause_button.configure(state="disabled", text="Pause")
+                    self.cancel_button.configure(state="disabled")
+                    self.status.set("Nightly run failed · see log")
+                    self._log(value)
+                    if self.close_when_finished:
+                        self._close_store()
+                        self.destroy()
+                        return
         except queue.Empty:
             pass
         self.after(150, self._poll)
 
     def _cancel(self):
-        if self.cancel_event:
-            self.cancel_event.set()
-            self.status.set("Cancelling after the current operation…")
+        if self.runner:
+            self.runner.stop()
+            self.status.set("Stopping safely after the current operation…")
+
+    def _toggle_pause(self):
+        if not self.runner:
+            return
+        if self.runner.pause_event.is_set():
+            self.runner.resume()
+            self.pause_button.configure(text="Pause")
+            self.status.set("Resuming nightly queue…")
+        else:
+            self.runner.pause()
+            self.pause_button.configure(text="Resume")
+            self.status.set("Pause requested · current operation will finish")
+
+    def _close_store(self):
+        if self.queue_store:
+            self.queue_store.close()
+            self.queue_store = None
 
     def _setup_vision(self):
         if not messagebox.askyesno("Download local vision model?",
@@ -378,6 +495,7 @@ class ClippingApp(tk.Tk):
             self.close_when_finished = True
             self._cancel()
             return
+        self._close_store()
         self.destroy()
 
     def _open_output(self):

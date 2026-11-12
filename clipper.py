@@ -8,6 +8,7 @@ import os
 import re
 import subprocess
 import threading
+import time
 from bisect import bisect_left
 from dataclasses import asdict, dataclass
 from pathlib import Path
@@ -167,7 +168,7 @@ def _audio_energy(path: Path, duration: float, cancel: threading.Event) -> list[
     return [math.sqrt(totals[i] / counts[i]) if counts[i] else 0.0 for i in range(bins)]
 
 
-def _motion(path: Path, duration: float, cancel: threading.Event) -> list[float]:
+def _motion(path: Path, duration: float, cancel: threading.Event, stats: dict | None = None) -> list[float]:
     import cv2
     cap = cv2.VideoCapture(str(path))
     if not cap.isOpened():
@@ -194,6 +195,8 @@ def _motion(path: Path, duration: float, cancel: threading.Event) -> list[float]
         cap.release()
     if not frames_read:
         raise RuntimeError(f"OpenCV decoded no frames: {path.name}")
+    if stats is not None:
+        stats["frames_decoded"] = frames_read
     return values
 
 
@@ -239,9 +242,24 @@ def _write_analysis_cache(path: Path, data: dict):
     temporary.replace(path)
 
 
+def _write_manifest(path: Path, data: dict):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_suffix(path.suffix + ".tmp")
+    temporary.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
+    temporary.replace(path)
+
+
+def _manifest_clip_path(folder: Path, filename: object) -> Path | None:
+    if not isinstance(filename, str) or Path(filename).name != filename or Path(filename).suffix.lower() != ".mp4":
+        return None
+    candidate = folder / filename
+    return candidate if candidate.resolve().parent == folder.resolve() else None
+
+
 def transcribe(path: Path, has_audio: bool, model_size: str, cache: Path, cancel: threading.Event,
                progress: Callable[[str], None] | None = None, model_manager: ModelManager | None = None,
-               audio_seconds: float | None = None, language: str | None = None) -> TranscriptionResult:
+               audio_seconds: float | None = None, language: str | None = None,
+               allow_inference: bool = True) -> TranscriptionResult:
     if not has_audio:
         return TranscriptionResult(None, [], "no_audio_track", "none", "none", outcome="NO_AUDIO", model=model_size)
     manager = model_manager or _default_model_manager(model_size)
@@ -265,6 +283,10 @@ def transcribe(path: Path, has_audio: bool, model_size: str, cache: Path, cancel
                 )
         except (OSError, ValueError, TypeError, KeyError):
             pass
+    if not allow_inference:
+        return TranscriptionResult(None, [], "unavailable", "not_run", "not_run",
+                                   "Whisper inference was disabled for this heuristic-only session",
+                                   "INFERENCE_DISABLED", settings["model"])
     try:
         segments, info, transcription_seconds, peak_vram = manager.transcribe(
             str(path), cancelled=cancel.is_set, language=language, beam_size=5,
@@ -856,13 +878,18 @@ def render(path: Path, output: Path, info: VideoInfo, clip: dict, words: list[Wo
         cmd += ["-c:v", selected_encoder]
         cmd += ["-preset", "p4", "-cq", "22", "-b:v", "0"] if selected_encoder == "h264_nvenc" else ["-preset", "veryfast", "-crf", "20"]
         cmd += ["-pix_fmt", "yuv420p", "-movflags", "+faststart", "-shortest", str(temp_video)]
+        encode_started = time.perf_counter()
         _run(cmd, cancel)
+        encode_seconds = time.perf_counter() - encode_started
+        validation_started = time.perf_counter()
         checked = validate_output(temp_video, duration, has_audio, temp_srt, cancel=cancel)
+        validation_seconds = time.perf_counter() - validation_started
         if cancel.is_set():
             raise InterruptedError("Processing cancelled")
         os.replace(temp_srt, srt_path)
         os.replace(temp_video, output)
-        return {**checked, "encoder": selected_encoder, "encoder_note": encoder_note}
+        return {**checked, "encoder": selected_encoder, "encoder_note": encoder_note,
+                "encode_seconds": round(encode_seconds, 3), "validation_seconds": round(validation_seconds, 3)}
     finally:
         temp_video.unlink(missing_ok=True)
         temp_srt.unlink(missing_ok=True)
@@ -872,8 +899,16 @@ def render(path: Path, output: Path, info: VideoInfo, clip: dict, words: list[Wo
 def process_video(path: Path, output_root: Path, model_size: str, clip_count: int, min_length: int, max_length: int,
                   cancel: threading.Event, progress: Callable[[str], None], encoder: str = "auto",
                   model_manager: ModelManager | None = None, semantic_enabled: bool = False,
-                  vision_manager: VisionModelManager | None = None) -> int:
+                  vision_manager: VisionModelManager | None = None, analysis_only: bool = False,
+                  release_vision_on_exit: bool = True,
+                  clip_validated: Callable[[dict, Path, Path, dict], None] | None = None,
+                  should_continue: Callable[[], bool] | None = None,
+                  transcription_enabled: bool = True, semantic_only: bool = False) -> int:
+    total_started = time.perf_counter()
+    stage_timings = {}
+    stage_started = time.perf_counter()
     info = probe(path)
+    stage_timings["metadata_probe_seconds"] = round(time.perf_counter() - stage_started, 3)
     suffix = hashlib.sha1(str(path.resolve()).casefold().encode()).hexdigest()[:8]
     folder = output_root / f"{re.sub(r'[^A-Za-z0-9._-]+', '_', path.stem)}_{suffix}"
     folder.mkdir(parents=True, exist_ok=True)
@@ -884,44 +919,50 @@ def process_video(path: Path, output_root: Path, model_size: str, clip_count: in
     source_stat = path.stat()
     settings = {"model": model_size, "clip_count": clip_count, "min_length": min_length, "max_length": max_length,
                 "encoder": encoder, "candidate_engine": "scene-aware-variable-v1",
-                "semantic_enabled": semantic_enabled}
+                "semantic_enabled": semantic_enabled, "transcription_enabled": transcription_enabled}
+    existing_manifest = {}
     if manifest_path.exists():
         try:
-            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            existing_manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError):
-            manifest = {}
-        if not isinstance(manifest, dict):
-            manifest = {}
-        existing_clips = manifest.get("clips", [])
+            existing_manifest = {}
+        if not isinstance(existing_manifest, dict):
+            existing_manifest = {}
+        existing_clips = existing_manifest.get("clips", [])
         files_valid = isinstance(existing_clips, list) and bool(existing_clips) and all(
-            isinstance(c, dict) and isinstance(c.get("filename"), str) and bool(c["filename"]) and
-            (folder / c["filename"]).is_file() for c in existing_clips)
-        source_valid = manifest.get("source_size") == source_stat.st_size and manifest.get("source_mtime_ns") == source_stat.st_mtime_ns
-        selection_report = manifest.get("candidate_selection")
+            isinstance(c, dict) and (candidate := _manifest_clip_path(folder, c.get("filename"))) is not None and
+            candidate.is_file() and candidate.with_suffix(".srt").is_file() for c in existing_clips)
+        source_valid = existing_manifest.get("source_size") == source_stat.st_size and existing_manifest.get("source_mtime_ns") == source_stat.st_mtime_ns
+        selection_report = existing_manifest.get("candidate_selection")
         complete_empty = isinstance(selection_report, dict) and selection_report.get("selected_count") == 0
-        if (files_valid or complete_empty) and source_valid and manifest.get("settings") == settings:
+        resumable_partial = existing_manifest.get("queue_stage") == "READY_TO_RENDER"
+        if (files_valid or complete_empty) and not resumable_partial and source_valid and existing_manifest.get("settings") == settings:
             progress(f"Already completed; skipping {path.name}")
             return 0
     if info.duration < min_length:
         manifest = {"source": path.name, "source_path": str(path), "source_size": source_stat.st_size,
                     "source_mtime_ns": source_stat.st_mtime_ns, "settings": settings, "source_duration": info.duration,
-                    "metadata": asdict(info), "clips": [], "output_resolution": "1080x1920",
+                    "metadata": asdict(info), "clips": [], "output_resolution": "1080x1920", "queue_stage": "SKIPPED",
                     "candidate_selection": {"candidate_count": 0, "rejected_count": 1, "selected_count": 0,
                                             "short_source_policy": "skip_below_minimum",
                                             "short_source_reason": f"Source duration {info.duration:.3f}s is below the configured minimum of {min_length}s.",
                                             "candidates": [], "rejections": [{"reason": "source shorter than configured minimum"}]}}
-        manifest_path.write_text(json.dumps(manifest, indent=2, ensure_ascii=False), encoding="utf-8")
+        _write_manifest(manifest_path, manifest)
         progress(f"Skipped {path.name}: {info.duration:.1f}s is shorter than the {min_length}s minimum")
         return 0
+    stage_started = time.perf_counter()
     fingerprint = _analysis_fingerprint(path, source_stat)
     cached_analysis = _read_analysis_cache(analysis_cache_path, fingerprint)
+    stage_timings["cache_check_seconds"] = round(time.perf_counter() - stage_started, 3)
     if cached_analysis:
         motion = cached_analysis["motion"]
         energy = cached_analysis["audio_energy"]
         cuts = cached_analysis["scene_cuts"]
         scene_status = cached_analysis["scene_detection_status"]
         analysis_cache_status = "reused"
+        stage_timings["motion_frames_decoded"] = cached_analysis.get("motion_frames_decoded")
     else:
+        stage_started = time.perf_counter()
         try:
             energy = _audio_energy(path, info.duration, cancel) if info.has_audio else [0.0] * max(1, math.ceil(info.duration))
             audio_analysis_valid = True
@@ -931,15 +972,23 @@ def process_video(path: Path, output_root: Path, model_size: str, clip_count: in
             progress(f"Audio analysis skipped for {path.name}: {exc}")
             energy = [0.0] * max(1, math.ceil(info.duration))
             audio_analysis_valid = False
-        motion = _motion(path, info.duration, cancel)
+        stage_timings["audio_analysis_seconds"] = round(time.perf_counter() - stage_started, 3)
+        stage_started = time.perf_counter()
+        motion_stats = {}
+        motion = _motion(path, info.duration, cancel, motion_stats)
+        stage_timings["motion_analysis_seconds"] = round(time.perf_counter() - stage_started, 3)
+        stage_timings["motion_frames_decoded"] = motion_stats.get("frames_decoded")
         if cancel.is_set():
             raise InterruptedError("Processing cancelled")
+        stage_started = time.perf_counter()
         cuts, scene_status = _scene_cuts(path)
+        stage_timings["scene_analysis_seconds"] = round(time.perf_counter() - stage_started, 3)
         if cancel.is_set():
             raise InterruptedError("Processing cancelled")
         analysis_cache_status = "created"
         if audio_analysis_valid and "failed" not in scene_status and "unavailable" not in scene_status:
             _write_analysis_cache(analysis_cache_path, {"schema": 2, "fingerprint": fingerprint, "motion": motion,
+                                                        "motion_frames_decoded": motion_stats.get("frames_decoded"),
                                                         "audio_energy": energy, "scene_cuts": cuts,
                                                         "scene_detection_status": scene_status})
         else:
@@ -947,7 +996,10 @@ def process_video(path: Path, output_root: Path, model_size: str, clip_count: in
     progress(f"Analysis signals · {analysis_cache_status}")
     progress(f"Scene detection: {scene_status}")
     progress(f"Transcribing {path.name}" if info.has_audio else f"No audio track in {path.name}")
-    transcript = transcribe(path, info.has_audio, model_size, cache, cancel, progress, model_manager, info.duration)
+    stage_started = time.perf_counter()
+    transcript = transcribe(path, info.has_audio, model_size, cache, cancel, progress, model_manager, info.duration,
+                            allow_inference=transcription_enabled)
+    stage_timings["transcription_seconds"] = round(time.perf_counter() - stage_started, 3)
     if transcript.outcome == "CANCELLED":
         raise InterruptedError(transcript.message or "Processing cancelled")
     words = transcript.words
@@ -957,8 +1009,12 @@ def process_video(path: Path, output_root: Path, model_size: str, clip_count: in
         progress(f"Transcription unavailable: {transcript.message}")
     else:
         progress(f"Transcription {transcript.status} · {transcript.device}/{transcript.precision} · {len(words)} words")
+    stage_started = time.perf_counter()
     selection = select_clips(info.duration, motion, energy, cuts, words, clip_count, min_length, max_length, cancel=cancel)
-    semantic_summary = {"enabled": semantic_enabled, "status": "disabled", "model": None, "analyzed": 0}
+    stage_timings["candidate_selection_seconds"] = round(time.perf_counter() - stage_started, 3)
+    semantic_summary = {"enabled": semantic_enabled,
+                        "status": "deferred" if analysis_only and semantic_enabled else "disabled",
+                        "model": None, "analyzed": 0}
     if semantic_enabled:
         vision = vision_manager or VisionModelManager()
         semantic_cache_path = folder / "semantic_cache.json"
@@ -967,48 +1023,74 @@ def process_video(path: Path, output_root: Path, model_size: str, clip_count: in
         ranked = sorted(ranked, key=lambda item: item["score"], reverse=True)[:min(12, max(8, clip_count * 2))]
         semantic_summary.update(status="heuristic_fallback", model="HuggingFaceTB/SmolVLM2-500M-Video-Instruct",
                                 category_diversity_weight=SEMANTIC_CATEGORY_DIVERSITY_WEIGHT,
-                                model_lifecycle="Whisper released before vision; vision released after this source; Whisper reloads for the next source")
+                                model_lifecycle=("Whisper released before vision; vision reused through the current microbatch"
+                                                 if not release_vision_on_exit else
+                                                 "Whisper released before vision; vision released after this source"))
+        missing_ranked = []
+        for candidate in ranked:
+            transcript_text = " ".join(word.text for word in words if candidate["start"] <= word.start < candidate["end"])
+            transcript_for_model = transcript_text if transcript.language == "en" else ""
+            key = semantic_cache_key(path, candidate, transcript_for_model, transcript.language)
+            if semantic_cache["entries"].get(key) is None:
+                missing_ranked.append((candidate, transcript_for_model, key))
+        semantic_started = time.perf_counter()
         try:
-            # Never keep the Whisper model resident while loading a vision model on the same GPU.
-            (model_manager or _default_model_manager(model_size)).release_whisper()
-            semantic_summary["device"] = vision.initialize().get("device")
-            for index, candidate in enumerate(ranked, 1):
-                if cancel.is_set():
-                    raise InterruptedError("Processing cancelled")
-                transcript_text = " ".join(word.text for word in words if candidate["start"] <= word.start < candidate["end"])
-                transcript_for_model = transcript_text if transcript.language == "en" else ""
-                key = semantic_cache_key(path, candidate, transcript_for_model, transcript.language)
-                result = semantic_cache["entries"].get(key)
-                if result is None:
-                    progress(f"Semantic analysis · candidate {index}/{len(ranked)}")
-                    frames, temp_dir = extract_candidate_frames(path, candidate["start"], candidate["end"], cancel)
-                    try:
-                        if len(frames) < 2:
-                            raise ValueError("Fewer than two valid distinct frames were extracted")
-                        result = vision.analyze(frames, transcript_for_model, transcript.language)
-                    finally:
-                        import shutil
-                        shutil.rmtree(temp_dir, ignore_errors=True)
-                    semantic_cache["entries"][key] = result
-                    write_semantic_cache(semantic_cache_path, semantic_cache)
-                candidate["heuristic_score"] = candidate["score"]
-                candidate["semantic_score"] = result["score"]
-                candidate["semantic_category"] = result["category"]
-                candidate["semantic_reason"] = result["reason"]
-                candidate["semantic_evidence"] = result["evidence"]
-                candidate["score"] = round(0.65 * candidate["heuristic_score"] + 0.35 * result["score"], 4)
-                semantic_summary["analyzed"] += 1
-                progress(f"Semantic result · {result['category']} · model {result['score']:.2f} · combined {candidate['score']:.2f}")
-            if semantic_summary["analyzed"]:
-                unique, _ = deduplicate_candidates(selection["candidates"])
-                semantic_selected, _ = select_diverse_candidates(
-                    unique, clip_count, info.duration, category_weight=SEMANTIC_CATEGORY_DIVERSITY_WEIGHT)
-                for candidate in selection["candidates"]:
-                    candidate["selected"] = candidate in semantic_selected
-                selection["selected"] = semantic_selected
-                selection["selected_count"] = len(semantic_selected)
-                selection["category_diversity_weight"] = SEMANTIC_CATEGORY_DIVERSITY_WEIGHT
-                semantic_summary["status"] = "completed"
+            if analysis_only and not semantic_only:
+                pass
+            else:
+                if missing_ranked:
+                    # Never keep the Whisper model resident while loading a vision model on the same GPU.
+                    (model_manager or _default_model_manager(model_size)).release_whisper()
+                    vision_state = vision.status()
+                    if vision.model is None or not isinstance(vision_state, dict):
+                        vision_started = time.perf_counter()
+                        semantic_summary["device"] = vision.initialize().get("device")
+                        semantic_summary["vision_initialization_seconds"] = round(time.perf_counter() - vision_started, 3)
+                    else:
+                        semantic_summary["device"] = vision_state.get("device")
+                        semantic_summary["vision_reused"] = True
+                else:
+                    semantic_summary["device"] = "cache"
+                for index, candidate in enumerate(ranked, 1):
+                    if cancel.is_set():
+                        raise InterruptedError("Processing cancelled")
+                    transcript_text = " ".join(word.text for word in words if candidate["start"] <= word.start < candidate["end"])
+                    transcript_for_model = transcript_text if transcript.language == "en" else ""
+                    key = semantic_cache_key(path, candidate, transcript_for_model, transcript.language)
+                    result = semantic_cache["entries"].get(key)
+                    if result is None:
+                        progress(f"Semantic analysis · candidate {index}/{len(ranked)}")
+                        frames, temp_dir = extract_candidate_frames(path, candidate["start"], candidate["end"], cancel)
+                        try:
+                            semantic_summary["frames_sampled"] = semantic_summary.get("frames_sampled", 0) + len(frames)
+                            if len(frames) < 2:
+                                raise ValueError("Fewer than two valid distinct frames were extracted")
+                            inference_started = time.perf_counter()
+                            result = vision.analyze(frames, transcript_for_model, transcript.language)
+                            semantic_summary["inference_seconds"] = round(semantic_summary.get("inference_seconds", 0) + time.perf_counter() - inference_started, 3)
+                        finally:
+                            import shutil
+                            shutil.rmtree(temp_dir, ignore_errors=True)
+                        semantic_cache["entries"][key] = result
+                        write_semantic_cache(semantic_cache_path, semantic_cache)
+                    candidate["heuristic_score"] = candidate["score"]
+                    candidate["semantic_score"] = result["score"]
+                    candidate["semantic_category"] = result["category"]
+                    candidate["semantic_reason"] = result["reason"]
+                    candidate["semantic_evidence"] = result["evidence"]
+                    candidate["score"] = round(0.65 * candidate["heuristic_score"] + 0.35 * result["score"], 4)
+                    semantic_summary["analyzed"] += 1
+                    progress(f"Semantic result · {result['category']} · model {result['score']:.2f} · combined {candidate['score']:.2f}")
+                if semantic_summary["analyzed"]:
+                    unique, _ = deduplicate_candidates(selection["candidates"])
+                    semantic_selected, _ = select_diverse_candidates(
+                        unique, clip_count, info.duration, category_weight=SEMANTIC_CATEGORY_DIVERSITY_WEIGHT)
+                    for candidate in selection["candidates"]:
+                        candidate["selected"] = candidate in semantic_selected
+                    selection["selected"] = semantic_selected
+                    selection["selected_count"] = len(semantic_selected)
+                    selection["category_diversity_weight"] = SEMANTIC_CATEGORY_DIVERSITY_WEIGHT
+                    semantic_summary["status"] = "completed"
         except InterruptedError:
             raise
         except Exception as exc:
@@ -1020,24 +1102,94 @@ def process_video(path: Path, output_root: Path, model_size: str, clip_count: in
             semantic_summary.update(status="heuristic_fallback", reason=f"{type(exc).__name__}: {exc}")
             progress(f"Semantic analysis unavailable; using heuristic ranking: {exc}")
         finally:
-            vision.release()
+            if release_vision_on_exit:
+                vision.release()
+        stage_timings["semantic_analysis_seconds"] = round(time.perf_counter() - semantic_started, 3)
     clips = selection["selected"]
     durations = ", ".join(f"{clip['duration']:.0f}s" for clip in clips) or "none"
     progress(f"Candidates · {selection['candidate_count']} generated, {len(clips)} selected · {durations}")
-    report_clips = []
-    for i, clip in enumerate(clips, 1):
-        if cancel.is_set():
-            raise InterruptedError("Processing cancelled")
-        filename = f"clip_{i:03}.mp4"
-        progress(f"Rendering {filename} from {path.name}")
-        render_info = render(path, folder / filename, info, clip, words, info.has_audio, cancel, encoder)
-        progress(f"Encoded with {render_info['encoder']} · {render_info['encoder_note']}")
-        report_clips.append({"filename": filename, **clip, "duration": round(clip["end"] - clip["start"], 3), "category": clip.get("semantic_category", "mixed activity"), "status": "completed", "render": render_info})
     candidate_report = {"candidate_count": selection["candidate_count"], "rejected_count": selection["rejected_count"],
                         "selected_count": len(clips), "short_source_policy": selection["short_source_policy"],
                         "category_diversity_weight": selection.get("category_diversity_weight", 0),
                         "activity_regions": selection["activity_regions"], "speech_regions": selection["speech_regions"],
                         "candidates": selection["candidates"], "rejections": selection["rejections"]}
-    manifest = {"source": path.name, "source_path": str(path), "source_size": source_stat.st_size, "source_mtime_ns": source_stat.st_mtime_ns, "settings": settings, "source_duration": info.duration, "metadata": asdict(info), "language": transcript.language, "output_resolution": "1080x1920", "clips": report_clips, "candidate_selection": candidate_report, "semantic_analysis": semantic_summary, "analysis_cache_status": analysis_cache_status, "scene_cuts": cuts, "scene_detection_status": scene_status, "transcription_words": len(words), "transcription_available": bool(words), "transcription_status": transcript.status, "transcription_outcome": transcript.outcome, "transcription_model": transcript.model, "transcription_device": transcript.device, "transcription_precision": transcript.precision, "transcription_message": transcript.message, "transcription_initialization_seconds": transcript.initialization_seconds, "transcription_seconds": transcript.transcription_seconds, "transcription_audio_seconds": transcript.audio_seconds, "transcription_rtf": transcript.real_time_factor, "transcription_vram_before": transcript.vram_before, "transcription_vram_after": transcript.vram_after, "transcription_peak_vram": transcript.peak_vram}
-    manifest_path.write_text(json.dumps(manifest, indent=2, ensure_ascii=False), encoding="utf-8")
+    existing_by_interval = {(round(item.get("start", -1), 3), round(item.get("end", -1), 3)): item
+                            for item in existing_manifest.get("clips", []) if isinstance(item, dict)}
+    report_clips = []
+    processing_phase = "semantic" if semantic_only else "analysis" if analysis_only else "render"
+    def persist(queue_stage: str):
+        stage_timings["episode_total_seconds"] = round(time.perf_counter() - total_started, 3)
+        stage_history = existing_manifest.get("stage_timings_by_pass", {})
+        if not isinstance(stage_history, dict):
+            stage_history = {}
+        stage_history[processing_phase] = dict(stage_timings)
+        manifest = {"source": path.name, "source_path": str(path), "source_size": source_stat.st_size,
+                    "source_mtime_ns": source_stat.st_mtime_ns, "settings": settings, "source_duration": info.duration,
+                    "metadata": asdict(info), "language": transcript.language, "output_resolution": "1080x1920",
+                    "clips": report_clips, "candidate_selection": candidate_report, "semantic_analysis": semantic_summary,
+                    "queue_stage": queue_stage, "stage_timings": dict(stage_timings),
+                    "stage_timings_by_pass": stage_history,
+                    "analysis_cache_status": analysis_cache_status, "scene_cuts": cuts,
+                    "scene_detection_status": scene_status, "transcription_words": len(words),
+                    "transcription_available": bool(words), "transcription_status": transcript.status,
+                    "transcription_outcome": transcript.outcome, "transcription_model": transcript.model,
+                    "transcription_device": transcript.device, "transcription_precision": transcript.precision,
+                    "transcription_message": transcript.message,
+                    "transcription_initialization_seconds": transcript.initialization_seconds,
+                    "transcription_seconds": transcript.transcription_seconds,
+                    "transcription_audio_seconds": transcript.audio_seconds, "transcription_rtf": transcript.real_time_factor,
+                    "transcription_vram_before": transcript.vram_before, "transcription_vram_after": transcript.vram_after,
+                    "transcription_peak_vram": transcript.peak_vram}
+        _write_manifest(manifest_path, manifest)
+    if analysis_only:
+        persist("READY_TO_RENDER" if semantic_only and semantic_summary.get("status") in {"completed", "heuristic_fallback"} else "ANALYZED")
+        return 0
+
+    render_started = time.perf_counter()
+    for index, clip in enumerate(clips, 1):
+        if cancel.is_set():
+            raise InterruptedError("Processing cancelled")
+        if should_continue and not should_continue():
+            break
+        filename = f"clip_{index:03}.mp4"
+        previous = existing_by_interval.get((round(clip["start"], 3), round(clip["end"], 3)))
+        if previous:
+            previous_mp4 = _manifest_clip_path(folder, previous.get("filename"))
+            if previous_mp4 is None:
+                previous_mp4 = folder / filename
+                previous = None
+        if previous:
+            previous_filename = previous_mp4.name
+            previous_srt = previous_mp4.with_suffix(".srt")
+            try:
+                checked = validate_output(previous_mp4, clip["end"] - clip["start"], info.has_audio, previous_srt, cancel=cancel)
+                report_clips.append({**previous, **clip, "filename": previous_filename,
+                                     "duration": round(clip["end"] - clip["start"], 3),
+                                     "category": clip.get("semantic_category", "mixed activity"),
+                                     "status": "completed", "validation": "VALIDATED",
+                                     "render": previous.get("render", checked)})
+                progress(f"Reusing validated output {previous_filename} for {path.name}")
+                persist("RENDERING")
+                continue
+            except Exception:
+                pass
+        if should_continue and not should_continue():
+            break
+        progress(f"Rendering clip {index}/{len(clips)} from {path.name}")
+        clip_started = time.perf_counter()
+        render_info = render(path, folder / filename, info, clip, words, info.has_audio, cancel, encoder)
+        stage_timings[f"clip_{index:03}_render_call_seconds"] = round(time.perf_counter() - clip_started, 3)
+        stage_timings[f"clip_{index:03}_encoding_seconds"] = render_info.get("encode_seconds", 0)
+        stage_timings[f"clip_{index:03}_validation_seconds"] = render_info.get("validation_seconds", 0)
+        progress(f"Validated clip_{index:03}.mp4 · {render_info['encoder']} · {render_info['encoder_note']}")
+        report_clip = {"filename": filename, **clip, "duration": round(clip["end"] - clip["start"], 3),
+                       "category": clip.get("semantic_category", "mixed activity"), "status": "completed",
+                       "validation": "VALIDATED", "render": render_info}
+        report_clips.append(report_clip)
+        persist("RENDERING")
+        if clip_validated:
+            clip_validated(report_clip, folder / filename, (folder / filename).with_suffix(".srt"), render_info)
+    stage_timings["rendering_seconds"] = round(time.perf_counter() - render_started, 3)
+    complete = len(report_clips) >= len(clips)
+    persist("COMPLETED" if complete else "READY_TO_RENDER")
     return len(report_clips)

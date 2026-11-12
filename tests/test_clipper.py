@@ -31,6 +31,20 @@ class ClipperTests(unittest.TestCase):
         _run(cmd)
         return path
 
+    def test_explicit_heuristic_session_does_not_initialize_whisper(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source = root / "audio.mp4"
+            source.write_bytes(b"fixture")
+            manager = types.SimpleNamespace(
+                model_identity=lambda _model: "cached-model",
+                transcribe=lambda *_args, **_kwargs: self.fail("Whisper inference must not start"),
+            )
+            result = transcribe(source, True, "small", root / "transcription.json", threading.Event(),
+                                model_manager=manager, allow_inference=False)
+            self.assertEqual("INFERENCE_DISABLED", result.outcome)
+            self.assertEqual("unavailable", result.status)
+
     def test_scan_recurses_and_filters_extensions_and_output(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -175,6 +189,8 @@ class ClipperTests(unittest.TestCase):
             self.assertIn("candidate_selection", data)
             self.assertEqual(1, data["candidate_selection"]["selected_count"])
             self.assertEqual((1080, 1920), (data["clips"][0]["render"]["width"], data["clips"][0]["render"]["height"]))
+            self.assertGreater(data["stage_timings_by_pass"]["render"]["motion_frames_decoded"], 0)
+            self.assertGreaterEqual(data["clips"][0]["render"]["validation_seconds"], 0)
 
 
 def _run(args):
