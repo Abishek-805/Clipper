@@ -19,7 +19,7 @@ No semantic model, cloud API, or new package was added.
 
 ## Verification
 
-- Focused candidate-selection suite: **28 passed**.
+- Focused candidate-selection suite: **28 passed** (corrected from 24 in the initial report).
 - Full suite: **54 passed, 0 failed, 0 skipped** (project virtual-environment unittest discovery), including Task 01 rendering, Task 02 model management, startup safety, the legacy manifest path, and analysis-cache reuse.
 - git diff --check: passed.
 - Synthetic benchmark: 34 unique proposals, 30 rejected, 4 selected.
@@ -60,7 +60,6 @@ No real movie, episode, or approved five-minute speech sample was processed for 
 
 ## Git
 
-- Task 02 preservation checkpoint: commit 677090f (Checkpoint Task 02 GPU model management), pushed to origin/main before Task 03 began.
 - Task 02 preservation checkpoint: 677090f is already pushed to origin/main.
 - Task 03 implementation checkpoint: ec46cb9 (Implement Task 03 variable clip selection), on main. This report is added in the follow-up reporting commit; both commits are pushed to origin/main together.
 

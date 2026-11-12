@@ -34,6 +34,7 @@ class StartupSafetyTests(unittest.TestCase):
                     app.update_idletasks()
                     self.assertEqual(str(folder), app.folder.get())
                     self.assertFalse(app.running)
+                    self.assertFalse(app.semantic.get())
                     process.assert_not_called()
                 finally:
                     app.destroy()

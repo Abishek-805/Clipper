@@ -14,8 +14,11 @@ from pathlib import Path
 from typing import Callable
 from diagnostics import ffmpeg_path, ffprobe_path, verify_encoder
 from model_manager import ModelManager
+from vision import (VisionModelManager, extract_candidate_frames, read_semantic_cache,
+                    semantic_cache_key, write_semantic_cache)
 
 VIDEO_EXTENSIONS = {".mp4", ".mkv", ".mov", ".avi", ".webm", ".m4v"}
+ANALYSIS_ENGINE_VERSION = "task04-signal-engine-v2"
 CANDIDATE_SCORE_WEIGHTS = {
     "average_motion": 0.22, "peak_motion": 0.10, "motion_consistency": 0.08,
     "average_audio_energy": 0.20, "audio_energy_variation": 0.08,
@@ -207,14 +210,15 @@ def _scene_cuts(path: Path) -> tuple[list[float], str]:
 
 
 def _analysis_fingerprint(path: Path, stat) -> str:
-    values = {"path": str(path.resolve()), "size": stat.st_size, "mtime_ns": stat.st_mtime_ns, "analysis_schema": 1}
+    values = {"path": str(path.resolve()), "size": stat.st_size, "mtime_ns": stat.st_mtime_ns,
+              "analysis_schema": 2, "analysis_engine_version": ANALYSIS_ENGINE_VERSION}
     return hashlib.sha256(json.dumps(values, sort_keys=True).encode("utf-8")).hexdigest()
 
 
 def _read_analysis_cache(path: Path, fingerprint: str) -> dict | None:
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
-        if (data.get("schema") == 1 and data.get("fingerprint") == fingerprint and
+        if (data.get("schema") == 2 and data.get("fingerprint") == fingerprint and
                 isinstance(data.get("motion"), list) and isinstance(data.get("audio_energy"), list) and
                 isinstance(data.get("scene_cuts"), list)):
             motion = [float(value) for value in data["motion"]]
@@ -616,7 +620,9 @@ def select_diverse_candidates(candidates: list[dict], count: int, duration: floa
         def diversity_score(item):
             center = (item["start"] + item["end"]) / 2
             distance = min((abs(center - (clip["start"] + clip["end"]) / 2) for clip in selected), default=duration)
-            return item["score"] * (0.7 + 0.3 * min(1.0, distance / max(1.0, duration / 4)))
+            category = item.get("semantic_category")
+            category_bonus = 0.05 if category and all(clip.get("semantic_category") != category for clip in selected) else 0.0
+            return item["score"] * (0.7 + 0.3 * min(1.0, distance / max(1.0, duration / 4))) + category_bonus
         remaining.sort(key=diversity_score, reverse=True)
         candidate = remaining.pop(0)
         conflict = next((prior for prior in selected if _interval_iou(candidate, prior) > 0.35 or
@@ -845,7 +851,8 @@ def render(path: Path, output: Path, info: VideoInfo, clip: dict, words: list[Wo
 
 def process_video(path: Path, output_root: Path, model_size: str, clip_count: int, min_length: int, max_length: int,
                   cancel: threading.Event, progress: Callable[[str], None], encoder: str = "auto",
-                  model_manager: ModelManager | None = None) -> int:
+                  model_manager: ModelManager | None = None, semantic_enabled: bool = False,
+                  vision_manager: VisionModelManager | None = None) -> int:
     info = probe(path)
     suffix = hashlib.sha1(str(path.resolve()).casefold().encode()).hexdigest()[:8]
     folder = output_root / f"{re.sub(r'[^A-Za-z0-9._-]+', '_', path.stem)}_{suffix}"
@@ -856,7 +863,8 @@ def process_video(path: Path, output_root: Path, model_size: str, clip_count: in
     progress(f"Analyzing {path.name}: {info.width}×{info.height}, {info.duration:.0f}s")
     source_stat = path.stat()
     settings = {"model": model_size, "clip_count": clip_count, "min_length": min_length, "max_length": max_length,
-                "encoder": encoder, "candidate_engine": "scene-aware-variable-v1"}
+                "encoder": encoder, "candidate_engine": "scene-aware-variable-v1",
+                "semantic_enabled": semantic_enabled}
     if manifest_path.exists():
         try:
             manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
@@ -911,7 +919,7 @@ def process_video(path: Path, output_root: Path, model_size: str, clip_count: in
             raise InterruptedError("Processing cancelled")
         analysis_cache_status = "created"
         if audio_analysis_valid and "failed" not in scene_status and "unavailable" not in scene_status:
-            _write_analysis_cache(analysis_cache_path, {"schema": 1, "fingerprint": fingerprint, "motion": motion,
+            _write_analysis_cache(analysis_cache_path, {"schema": 2, "fingerprint": fingerprint, "motion": motion,
                                                         "audio_energy": energy, "scene_cuts": cuts,
                                                         "scene_detection_status": scene_status})
         else:
@@ -930,6 +938,65 @@ def process_video(path: Path, output_root: Path, model_size: str, clip_count: in
     else:
         progress(f"Transcription {transcript.status} · {transcript.device}/{transcript.precision} · {len(words)} words")
     selection = select_clips(info.duration, motion, energy, cuts, words, clip_count, min_length, max_length, cancel=cancel)
+    semantic_summary = {"enabled": semantic_enabled, "status": "disabled", "model": None, "analyzed": 0}
+    if semantic_enabled:
+        vision = vision_manager or VisionModelManager()
+        semantic_cache_path = folder / "semantic_cache.json"
+        semantic_cache = read_semantic_cache(semantic_cache_path)
+        ranked = [candidate for candidate in selection["candidates"] if candidate.get("boundary_valid", True) and candidate.get("score", 0) >= 0.075]
+        ranked = sorted(ranked, key=lambda item: item["score"], reverse=True)[:min(12, max(8, clip_count * 2))]
+        semantic_summary.update(status="heuristic_fallback", model="HuggingFaceTB/SmolVLM2-500M-Video-Instruct")
+        try:
+            # Never keep the Whisper model resident while loading a vision model on the same GPU.
+            (model_manager or _default_model_manager(model_size)).release_whisper()
+            semantic_summary["device"] = vision.initialize().get("device")
+            for index, candidate in enumerate(ranked, 1):
+                if cancel.is_set():
+                    raise InterruptedError("Processing cancelled")
+                transcript_text = " ".join(word.text for word in words if candidate["start"] <= word.start < candidate["end"])
+                transcript_for_model = transcript_text if transcript.language == "en" else ""
+                key = semantic_cache_key(path, candidate, transcript_for_model, transcript.language)
+                result = semantic_cache["entries"].get(key)
+                if result is None:
+                    progress(f"Semantic analysis · candidate {index}/{len(ranked)}")
+                    frames, temp_dir = extract_candidate_frames(path, candidate["start"], candidate["end"], cancel)
+                    try:
+                        if len(frames) < 2:
+                            raise ValueError("Fewer than two valid distinct frames were extracted")
+                        result = vision.analyze(frames, transcript_for_model, transcript.language)
+                    finally:
+                        import shutil
+                        shutil.rmtree(temp_dir, ignore_errors=True)
+                    semantic_cache["entries"][key] = result
+                    write_semantic_cache(semantic_cache_path, semantic_cache)
+                candidate["heuristic_score"] = candidate["score"]
+                candidate["semantic_score"] = result["score"]
+                candidate["semantic_category"] = result["category"]
+                candidate["semantic_reason"] = result["reason"]
+                candidate["semantic_evidence"] = result["evidence"]
+                candidate["score"] = round(0.65 * candidate["heuristic_score"] + 0.35 * result["score"], 4)
+                semantic_summary["analyzed"] += 1
+                progress(f"Semantic result · {result['category']} · model {result['score']:.2f} · combined {candidate['score']:.2f}")
+            if semantic_summary["analyzed"]:
+                unique, _ = deduplicate_candidates(selection["candidates"])
+                semantic_selected, _ = select_diverse_candidates(unique, clip_count, info.duration)
+                for candidate in selection["candidates"]:
+                    candidate["selected"] = candidate in semantic_selected
+                selection["selected"] = semantic_selected
+                selection["selected_count"] = len(semantic_selected)
+                semantic_summary["status"] = "completed"
+        except InterruptedError:
+            raise
+        except Exception as exc:
+            for candidate in selection["candidates"]:
+                if "heuristic_score" in candidate:
+                    candidate["score"] = candidate.pop("heuristic_score")
+                    for field in ("semantic_score", "semantic_category", "semantic_reason", "semantic_evidence"):
+                        candidate.pop(field, None)
+            semantic_summary.update(status="heuristic_fallback", reason=f"{type(exc).__name__}: {exc}")
+            progress(f"Semantic analysis unavailable; using heuristic ranking: {exc}")
+        finally:
+            vision.release()
     clips = selection["selected"]
     durations = ", ".join(f"{clip['duration']:.0f}s" for clip in clips) or "none"
     progress(f"Candidates · {selection['candidate_count']} generated, {len(clips)} selected · {durations}")
@@ -941,11 +1008,11 @@ def process_video(path: Path, output_root: Path, model_size: str, clip_count: in
         progress(f"Rendering {filename} from {path.name}")
         render_info = render(path, folder / filename, info, clip, words, info.has_audio, cancel, encoder)
         progress(f"Encoded with {render_info['encoder']} · {render_info['encoder_note']}")
-        report_clips.append({"filename": filename, **clip, "duration": round(clip["end"] - clip["start"], 3), "category": "mixed activity", "status": "completed", "render": render_info})
+        report_clips.append({"filename": filename, **clip, "duration": round(clip["end"] - clip["start"], 3), "category": clip.get("semantic_category", "mixed activity"), "status": "completed", "render": render_info})
     candidate_report = {"candidate_count": selection["candidate_count"], "rejected_count": selection["rejected_count"],
                         "selected_count": len(clips), "short_source_policy": selection["short_source_policy"],
                         "activity_regions": selection["activity_regions"], "speech_regions": selection["speech_regions"],
                         "candidates": selection["candidates"], "rejections": selection["rejections"]}
-    manifest = {"source": path.name, "source_path": str(path), "source_size": source_stat.st_size, "source_mtime_ns": source_stat.st_mtime_ns, "settings": settings, "source_duration": info.duration, "metadata": asdict(info), "language": transcript.language, "output_resolution": "1080x1920", "clips": report_clips, "candidate_selection": candidate_report, "analysis_cache_status": analysis_cache_status, "scene_cuts": cuts, "scene_detection_status": scene_status, "transcription_words": len(words), "transcription_available": bool(words), "transcription_status": transcript.status, "transcription_outcome": transcript.outcome, "transcription_model": transcript.model, "transcription_device": transcript.device, "transcription_precision": transcript.precision, "transcription_message": transcript.message, "transcription_initialization_seconds": transcript.initialization_seconds, "transcription_seconds": transcript.transcription_seconds, "transcription_audio_seconds": transcript.audio_seconds, "transcription_rtf": transcript.real_time_factor, "transcription_vram_before": transcript.vram_before, "transcription_vram_after": transcript.vram_after, "transcription_peak_vram": transcript.peak_vram}
+    manifest = {"source": path.name, "source_path": str(path), "source_size": source_stat.st_size, "source_mtime_ns": source_stat.st_mtime_ns, "settings": settings, "source_duration": info.duration, "metadata": asdict(info), "language": transcript.language, "output_resolution": "1080x1920", "clips": report_clips, "candidate_selection": candidate_report, "semantic_analysis": semantic_summary, "analysis_cache_status": analysis_cache_status, "scene_cuts": cuts, "scene_detection_status": scene_status, "transcription_words": len(words), "transcription_available": bool(words), "transcription_status": transcript.status, "transcription_outcome": transcript.outcome, "transcription_model": transcript.model, "transcription_device": transcript.device, "transcription_precision": transcript.precision, "transcription_message": transcript.message, "transcription_initialization_seconds": transcript.initialization_seconds, "transcription_seconds": transcript.transcription_seconds, "transcription_audio_seconds": transcript.audio_seconds, "transcription_rtf": transcript.real_time_factor, "transcription_vram_before": transcript.vram_before, "transcription_vram_after": transcript.vram_after, "transcription_peak_vram": transcript.peak_vram}
     manifest_path.write_text(json.dumps(manifest, indent=2, ensure_ascii=False), encoding="utf-8")
     return len(report_clips)

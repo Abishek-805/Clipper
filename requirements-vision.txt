@@ -1,0 +1,5 @@
+# Optional semantic scene analysis. Install PyTorch separately from the official
+# Windows/CUDA selector that matches the installed NVIDIA runtime.
+transformers>=4.49,<5
+accelerate>=1.2,<2
+Pillow>=10,<13

@@ -26,8 +26,6 @@
 | 01 | Complete | Reliability and end-to-end verification |
 | 02 | Complete with benchmark limitation | Lazy GPU-aware model management, one-model reuse, safe CPU fallback, transcription cache fingerprinting, and local-only benchmark. Code tests pass; real model initialization and transcription benchmarks were skipped because the Whisper model weights and an approved audio sample were unavailable. See [task-02-report.md](task-02-report.md). |
 | 03 | Complete; synthetic benchmark only | Scene-aware variable-duration candidates, speech-aware boundary refinement, explainable multi-signal scores, deduplication/diversity, and reusable analysis-signal cache. Synthetic interval benchmark and tests pass; real footage quality is unverified. See [task-03-report.md](task-03-report.md). |
-| 04 | Not started | Optional local semantic scene understanding |
+| 04 | Implemented; model inference not run | Optional local SmolVLM2 semantic analysis, local-only by default, explicit opt-in, bounded six-frame sampling, cached scores, and heuristic fallback. See [task-04-report.md](task-04-report.md). Hardware inference and real-footage quality remain unverified because optional dependencies, model weights, and an approved sample were not installed/provided. |
 | 05 | Not started | Professional captions and improved framing |
 | 06 | Not started | Preview, packaging, quality evaluation, and final benchmark |
-
-Task 04 has not been started.

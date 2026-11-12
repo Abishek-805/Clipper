@@ -22,6 +22,8 @@ Candidate selection proposes intervals from scene groups, sustained signal activ
 
 Moment ranking is a local heuristic, not semantic understanding: it can score activity and speech density, but it cannot reliably know whether a moment is funny, emotional, or narratively important. The synthetic candidate benchmark checks interval behavior against planted signal events only; it does not establish real-world entertainment quality. Review all clips before publishing.
 
+Optional semantic analysis can be enabled with the **Enable optional local semantic scene analysis** checkbox. It uses the pinned SmolVLM2-500M-Video-Instruct model only when Start is clicked, samples up to six frames per candidate, and blends its uncalibrated score 35% with the heuristic score (65%). Heuristic ranking remains active if setup, weights, inference, or CUDA is unavailable. Semantic analysis is English-transcript-aware only; non-English speech is not translated or treated as understood. No weights or optional dependencies are downloaded automatically. Install optional packages with `python -m pip install -r requirements-vision.txt`, install PyTorch using the official Windows/CUDA selector, and explicitly authorize the pinned model download with `python benchmark_vision.py --allow-model-download`. Run `python benchmark_vision.py --video <one-local-video>` for a local diagnostic. Do not pass a directory; the benchmark never searches for a sample.
+
 ## Requirements / limits
 
 - Windows 10/11, Python 3.11+, FFmpeg and FFprobe on `PATH`.
@@ -39,3 +41,5 @@ Run python benchmark_candidates.py to regenerate the deterministic signal benchm
 Whisper loads only after **Start Automatic Clipping** and is reused across videos in one batch. Automatic mode prefers CUDA `int8_float16` when the installed CTranslate2 runtime reports support, with CPU int8 fallback; CUDA OOM during inference retries once on CPU. Transcription cache entries are keyed to the source file and transcription settings and are replaced only after a complete successful transcription.
 
 Run `python benchmark_models.py` to record hardware information and initialize supported modes using models already present in the Hugging Face cache. This benchmark never downloads weights or searches for audio. Transcription timings run only when an explicit sample is supplied with `--audio-sample <path>`; the report says `NOT RUN` otherwise. The RTX 3050 float16 smoke test is skipped unless at least 2048 MiB of VRAM is free.
+
+Run `python benchmark_vision.py` for a local-only dependency/cache/hardware diagnostic. Real inference requires an explicit `--video` path. Model downloads are disabled unless `--allow-model-download` is explicitly supplied.

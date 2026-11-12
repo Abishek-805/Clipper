@@ -240,7 +240,9 @@ class CandidateSelectionTests(unittest.TestCase):
             motion.assert_called_once()
             scenes.assert_called_once()
             cache = next((root / "out").rglob("analysis_cache.json"))
-            self.assertTrue(json.loads(cache.read_text(encoding="utf-8"))["motion"])
+            cached = json.loads(cache.read_text(encoding="utf-8"))
+            self.assertEqual(2, cached["schema"])
+            self.assertTrue(cached["motion"])
 
 
 if __name__ == "__main__":
