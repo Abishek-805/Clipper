@@ -102,7 +102,7 @@ The [CTranslate2 Windows installation guidance](https://github.com/OpenNMT/CTran
 ## Repository state
 
 - Branch created from the exact Task 06B baseline: `feature/task-06c-editorial-quality`.
-- Graphify's code graph was refreshed after implementation: 673 nodes, 1,524 edges, 26 communities; community labels were not sent for LLM refresh.
+- Graphify rebuilt the code graph from the implementation files: 673 nodes, 1,524 edges, 26 communities. Its HTML/report metadata still says it was built at baseline commit `37e6bcb` because the post-commit update found no topology changes and left outputs untouched. Community labels were not sent for LLM refresh.
 - Commit/push status: final Task06C commit is the branch HEAD; pushed to `origin`; working tree clean.
 - `main` and the verified 06B backup remain untouched.
 - Task 07 is not started.
