@@ -91,7 +91,7 @@ class ClippingApp(tk.Tk):
         folder = filedialog.askdirectory(title="Select your video folder")
         if folder:
             self.folder.set(folder)
-            videos = scan_videos(Path(folder))
+            videos = scan_videos(Path(folder), OUTPUT)
             self.detected.set(f"{len(videos)} video{'s' if len(videos) != 1 else ''} detected")
 
     def _start(self):
@@ -103,11 +103,11 @@ class ClippingApp(tk.Tk):
         if not shutil.which("ffmpeg") or not shutil.which("ffprobe"):
             messagebox.showerror("FFmpeg required", "Install FFmpeg and add ffmpeg.exe and ffprobe.exe to PATH, then restart the app.")
             return
-        videos = scan_videos(Path(self.folder.get()))
+        videos = scan_videos(Path(self.folder.get()), OUTPUT)
         if not videos:
             messagebox.showinfo("No videos found", "This folder contains no supported video files.")
             return
-        if self.minimum.get() < 1 or self.maximum.get() < self.minimum.get():
+        if self.count.get() < 1 or self.minimum.get() < 1 or self.maximum.get() < self.minimum.get():
             messagebox.showerror("Invalid clip length", "Maximum seconds must be at least the minimum.")
             return
         self.running = True
@@ -120,11 +120,16 @@ class ClippingApp(tk.Tk):
     def _worker(self, videos: list[Path]):
         rows = []
         done = 0
+        OUTPUT.mkdir(parents=True, exist_ok=True)
+        def log(message: str):
+            with (OUTPUT / "processing.log").open("a", encoding="utf-8") as f:
+                f.write(message.rstrip() + "\n")
+            self.queue.put(("log", message))
         for path in videos:
             if self.cancel_event.is_set():
                 break
             try:
-                n = process_video(path, OUTPUT, self.model.get(), self.count.get(), self.minimum.get(), self.maximum.get(), self.cancel_event, lambda msg: self.queue.put(("log", msg)))
+                n = process_video(path, OUTPUT, self.model.get(), self.count.get(), self.minimum.get(), self.maximum.get(), self.cancel_event, log)
                 done += n
                 rows.append((path.name, n, "completed"))
             except InterruptedError:
@@ -132,7 +137,7 @@ class ClippingApp(tk.Tk):
                 break
             except Exception as exc:
                 rows.append((path.name, 0, f"failed: {exc}"))
-                self.queue.put(("log", f"ERROR · {path.name}: {exc}"))
+                log(f"ERROR · {path.name}: {exc}")
             self.queue.put(("progress", videos.index(path) + 1))
         OUTPUT.mkdir(parents=True, exist_ok=True)
         with (OUTPUT / "processing_report.csv").open("w", newline="", encoding="utf-8-sig") as f:

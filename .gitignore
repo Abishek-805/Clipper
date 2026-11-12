@@ -2,6 +2,7 @@
 __pycache__/
 *.py[cod]
 Shorts_Output/
+graphify-out/
 logs/
 *.log
 .pytest_cache/

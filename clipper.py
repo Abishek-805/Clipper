@@ -33,23 +33,28 @@ class Word:
     text: str
 
 
-def scan_videos(folder: Path) -> list[Path]:
-    return sorted((p for p in folder.rglob("*") if p.is_file() and p.suffix.lower() in VIDEO_EXTENSIONS), key=lambda p: str(p).casefold())
+def scan_videos(folder: Path, exclude: Path | None = None) -> list[Path]:
+    excluded = exclude.resolve() if exclude else None
+    return sorted((p for p in folder.rglob("*") if p.is_file() and p.suffix.lower() in VIDEO_EXTENSIONS and (not excluded or excluded not in p.resolve().parents)), key=lambda p: str(p).casefold())
 
 
 def _run(args: list[str], cancel: threading.Event | None = None, **kwargs) -> subprocess.CompletedProcess:
     if cancel and cancel.is_set():
         raise InterruptedError("Processing cancelled")
     proc = subprocess.Popen(args, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, **kwargs)
-    while proc.poll() is None:
-        if cancel and cancel.wait(0.2):
-            proc.terminate()
-            try:
-                proc.wait(timeout=3)
-            except subprocess.TimeoutExpired:
-                proc.kill()
-            raise InterruptedError("Processing cancelled")
-    stdout, stderr = proc.communicate()
+    while True:
+        try:
+            stdout, stderr = proc.communicate(timeout=0.2)
+            break
+        except subprocess.TimeoutExpired:
+            if cancel and cancel.is_set():
+                proc.terminate()
+                try:
+                    proc.communicate(timeout=3)
+                except subprocess.TimeoutExpired:
+                    proc.kill()
+                    proc.communicate()
+                raise InterruptedError("Processing cancelled")
     result = subprocess.CompletedProcess(args, proc.returncode, stdout, stderr)
     if result.returncode:
         raise RuntimeError(result.stderr[-2500:] or f"Command failed: {args[0]}")
@@ -143,10 +148,13 @@ def transcribe(path: Path, has_audio: bool, model_size: str, cache: Path, cancel
     if not has_audio:
         return None, []
     if cache.exists():
-        data = json.loads(cache.read_text(encoding="utf-8"))
-        stat = path.stat()
-        if data.get("source_size") == stat.st_size and data.get("source_mtime_ns") == stat.st_mtime_ns:
-            return data.get("language"), [Word(**w) for w in data.get("words", [])]
+        try:
+            data = json.loads(cache.read_text(encoding="utf-8"))
+            stat = path.stat()
+            if data.get("source_size") == stat.st_size and data.get("source_mtime_ns") == stat.st_mtime_ns:
+                return data.get("language"), [Word(**w) for w in data.get("words", [])]
+        except (OSError, ValueError, TypeError, KeyError):
+            pass
     try:
         from faster_whisper import WhisperModel
     except ImportError:
@@ -157,17 +165,22 @@ def transcribe(path: Path, has_audio: bool, model_size: str, cache: Path, cancel
     except Exception:
         cuda = False
     try:
-        model = WhisperModel(model_size, device="cuda" if cuda else "cpu", compute_type="float16" if cuda else "int8")
+        try:
+            model = WhisperModel(model_size, device="cuda" if cuda else "cpu", compute_type="float16" if cuda else "int8")
+        except Exception:
+            model = WhisperModel(model_size, device="cpu", compute_type="int8")
+        segments, info = model.transcribe(str(path), word_timestamps=True, vad_filter=True)
+        words = []
+        for segment in segments:
+            if cancel.is_set():
+                raise InterruptedError("Processing cancelled")
+            for word in segment.words or []:
+                if word.start is not None and word.end is not None:
+                    words.append(Word(float(word.start), float(word.end), word.word))
+    except InterruptedError:
+        raise
     except Exception:
-        model = WhisperModel(model_size, device="cpu", compute_type="int8")
-    segments, info = model.transcribe(str(path), word_timestamps=True, vad_filter=True)
-    words = []
-    for segment in segments:
-        if cancel.is_set():
-            raise InterruptedError("Processing cancelled")
-        for word in segment.words or []:
-            if word.start is not None and word.end is not None:
-                words.append(Word(float(word.start), float(word.end), word.word))
+        return None, []
     cache.parent.mkdir(parents=True, exist_ok=True)
     stat = path.stat()
     cache.write_text(json.dumps({"language": info.language, "source_size": stat.st_size, "source_mtime_ns": stat.st_mtime_ns, "words": [asdict(w) for w in words]}, ensure_ascii=False), encoding="utf-8")
@@ -184,6 +197,8 @@ def _normalize(values: list[float]) -> list[float]:
 
 
 def rank_clips(duration: float, motion: list[float], audio: list[float], cuts: list[float], words: list[Word], count: int = 5, min_length: int = 20, max_length: int = 55) -> list[dict]:
+    min_length = max(1, int(min_length))
+    max_length = max(min_length, int(max_length))
     length = min(max_length, duration)
     if length < min_length:
         length = duration
@@ -217,10 +232,13 @@ def rank_clips(duration: float, motion: list[float], audio: list[float], cuts: l
         selected.append(best)
     selected.sort(key=lambda c: c["start"])
     for c in selected:
+        original_start, original_end = c["start"], c["end"]
         nearby = [w for w in words if c["start"] <= w.start < c["end"]]
         if nearby:
             c["start"] = max(0, max((w.end for w in words if c["start"] - 1.5 <= w.end <= c["start"]), default=c["start"]))
             c["end"] = min(duration, min((w.start for w in words if c["end"] <= w.start <= c["end"] + 1.5), default=c["end"]))
+        if not 0 <= c["start"] < c["end"] <= duration or c["end"] - c["start"] > max_length:
+            c["start"], c["end"] = original_start, original_end
         reasons = [name.replace("_", " ") for name, val in c["signals"].items() if val >= 0.35]
         c["reason"] = "Strong " + (", ".join(reasons) if reasons else "combined audio and visual activity")
     return selected
@@ -231,7 +249,8 @@ def _ass_text(words: list[Word], start: float, end: float) -> str:
     events = []
     for offset in range(0, len(selected), 7):
         line = selected[offset:offset + 7]
-        text = "".join(f"{{\\kf{max(1, round((w.end - w.start) * 100))}}}{_ass_escape(w.text)}" for w in line)
+        words_text = [f"{{\\kf{max(1, round((w.end - w.start) * 100))}}}{_ass_escape(w.text)}" for w in line]
+        text = "".join(words_text[:4]) + ("\\N" + "".join(words_text[4:]) if len(words_text) > 4 else "")
         events.append(f"Dialogue: 0,{_ass_time(max(0, line[0].start-start))},{_ass_time(min(end-start, line[-1].end-start))},Default,,0,0,0,,{text.strip()}")
     return "\n".join(["[Script Info]", "ScriptType: v4.00+", "PlayResX: 1080", "PlayResY: 1920", "[V4+ Styles]", "Format: Name,Fontname,Fontsize,PrimaryColour,SecondaryColour,OutlineColour,BackColour,Bold,Italic,Underline,StrikeOut,ScaleX,ScaleY,Spacing,Angle,BorderStyle,Outline,Shadow,Alignment,MarginL,MarginR,MarginV,Encoding", "Style: Default,Arial,66,&H00FFFFFF,&H0000D7FF,&H00101010,&H80000000,-1,0,0,0,100,100,0,0,1,5,2,2,70,70,250,1", "[Events]", "Format: Layer,Start,End,Style,Name,MarginL,MarginR,MarginV,Effect,Text", *events])
 
@@ -254,7 +273,14 @@ def _srt(words: list[Word], start: float, end: float) -> str:
     def stamp(s: float) -> str:
         ms = max(0, int(s * 1000)); h, ms = divmod(ms, 3600000); m, ms = divmod(ms, 60000); sec, ms = divmod(ms, 1000)
         return f"{h:02}:{m:02}:{sec:02},{ms:03}"
-    return "\n\n".join(f"{i}\n{stamp(max(0,c[0].start-start))} --> {stamp(min(end-start,c[-1].end-start))}\n{' '.join(w.text.strip() for w in c).strip()}" for i, c in enumerate(chunks, 1))
+    entries = []
+    for i, chunk in enumerate(chunks, 1):
+        text = [w.text.replace("\n", " ").replace("\r", " ").strip() for w in chunk]
+        caption = " ".join(text[:4])
+        if len(text) > 4:
+            caption += "\n" + " ".join(text[4:])
+        entries.append(f"{i}\n{stamp(max(0, chunk[0].start-start))} --> {stamp(min(end-start, chunk[-1].end-start))}\n{caption}")
+    return "\n\n".join(entries)
 
 
 def _escape_filter(path: Path) -> str:
@@ -298,14 +324,21 @@ def process_video(path: Path, output_root: Path, model_size: str, clip_count: in
     cache = folder / "transcription.json"
     progress(f"Analyzing {path.name}: {info.width}×{info.height}, {info.duration:.0f}s")
     source_stat = path.stat()
+    settings = {"model": model_size, "clip_count": clip_count, "min_length": min_length, "max_length": max_length}
     if manifest_path.exists():
         manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
         files_valid = bool(manifest.get("clips")) and all((folder / c.get("filename", "")).is_file() for c in manifest["clips"])
         source_valid = manifest.get("source_size") == source_stat.st_size and manifest.get("source_mtime_ns") == source_stat.st_mtime_ns
-        if files_valid and source_valid and len(manifest["clips"]) == clip_count:
+        if files_valid and source_valid and manifest.get("settings") == settings and len(manifest["clips"]) == clip_count:
             progress(f"Already completed; skipping {path.name}")
             return 0
-    energy = _audio_energy(path, info.duration, cancel) if info.has_audio else [0.0] * max(1, math.ceil(info.duration))
+    try:
+        energy = _audio_energy(path, info.duration, cancel) if info.has_audio else [0.0] * max(1, math.ceil(info.duration))
+    except InterruptedError:
+        raise
+    except Exception as exc:
+        progress(f"Audio analysis skipped for {path.name}: {exc}")
+        energy = [0.0] * max(1, math.ceil(info.duration))
     motion = _motion(path, info.duration, cancel)
     cuts = _scene_cuts(path)
     progress(f"Transcribing {path.name}" if info.has_audio else f"No audio track in {path.name}")
@@ -319,6 +352,6 @@ def process_video(path: Path, output_root: Path, model_size: str, clip_count: in
         progress(f"Rendering {filename} from {path.name}")
         render(path, folder / filename, info, clip, words, info.has_audio, cancel)
         report_clips.append({"filename": filename, **clip, "duration": round(clip["end"] - clip["start"], 3), "category": "mixed activity", "status": "completed"})
-    manifest = {"source": path.name, "source_path": str(path), "source_size": source_stat.st_size, "source_mtime_ns": source_stat.st_mtime_ns, "source_duration": info.duration, "metadata": asdict(info), "language": language, "output_resolution": "1080x1920", "clips": report_clips, "scene_cuts": cuts, "transcription_words": len(words), "transcription_available": bool(words)}
+    manifest = {"source": path.name, "source_path": str(path), "source_size": source_stat.st_size, "source_mtime_ns": source_stat.st_mtime_ns, "settings": settings, "source_duration": info.duration, "metadata": asdict(info), "language": language, "output_resolution": "1080x1920", "clips": report_clips, "scene_cuts": cuts, "transcription_words": len(words), "transcription_available": bool(words)}
     manifest_path.write_text(json.dumps(manifest, indent=2, ensure_ascii=False), encoding="utf-8")
     return len(report_clips)

@@ -1,12 +1,14 @@
 import json
 import shutil
 import subprocess
+import sys
 import tempfile
 import threading
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
-from clipper import VideoInfo, Word, _srt, probe, rank_clips, render, scan_videos
+from clipper import Word, _scene_cuts, _srt, probe, rank_clips, render, scan_videos, transcribe
 
 
 class ClipperTests(unittest.TestCase):
@@ -15,8 +17,10 @@ class ClipperTests(unittest.TestCase):
             root = Path(tmp)
             (root / "nested").mkdir()
             (root / "nested" / "episode.MKV").touch()
+            (root / "output").mkdir()
+            (root / "output" / "finished.mp4").touch()
             (root / "readme.txt").touch()
-            self.assertEqual(["episode.MKV"], [p.name for p in scan_videos(root)])
+            self.assertEqual(["episode.MKV"], [p.name for p in scan_videos(root, root / "output")])
 
     def test_rank_selects_valid_distributed_segments(self):
         motion = [0.0] * 120
@@ -34,6 +38,30 @@ class ClipperTests(unittest.TestCase):
         self.assertIn("00:00:01,000 --> 00:00:02,000", srt)
         self.assertIn("hello world.", srt)
 
+    def test_boundaries_stay_inside_source_and_length_limit(self):
+        words = [Word(19.7, 20.0, "before"), Word(24, 24.2, "inside"), Word(45, 45.2, "after")]
+        clips = rank_clips(60, [0.0] * 60, [0.0] * 60, [], words, count=1, min_length=20, max_length=25)
+        self.assertLessEqual(clips[0]["end"] - clips[0]["start"], 25)
+        self.assertGreaterEqual(clips[0]["start"], 0)
+        self.assertLessEqual(clips[0]["end"], 60)
+
+    def test_transcription_gracefully_skips_missing_optional_package(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            video = Path(tmp) / "source.mp4"
+            video.touch()
+            with patch.dict(sys.modules, {"faster_whisper": None}):
+                self.assertEqual((None, []), transcribe(video, True, "small", Path(tmp) / "cache.json", threading.Event()))
+
+    def test_scene_detection_optional_failure_returns_no_cuts(self):
+        with patch.dict(sys.modules, {"scenedetect": None}):
+            self.assertEqual([], _scene_cuts(Path("missing.mp4")))
+
+    def test_probe_rejects_video_without_video_stream(self):
+        with patch("clipper._run") as run:
+            run.return_value.stdout = '{"streams": [{"codec_type": "audio"}], "format": {"duration": "1"}}'
+            with self.assertRaisesRegex(ValueError, "No video stream"):
+                probe(Path("audio.mp3"))
+
     @unittest.skipUnless(shutil.which("ffmpeg") and shutil.which("ffprobe"), "FFmpeg/FFprobe unavailable")
     def test_metadata_and_vertical_render(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -49,6 +77,7 @@ class ClipperTests(unittest.TestCase):
             video = next(s for s in streams if s["codec_type"] == "video")
             self.assertEqual((1080, 1920, "h264"), (video["width"], video["height"], video["codec_name"]))
             self.assertTrue(any(s.get("codec_name") == "aac" for s in streams))
+            self.assertAlmostEqual(3, float(data["format"].get("duration", 0)), delta=0.2)
 
 
 if __name__ == "__main__":
