@@ -193,7 +193,9 @@ class Task05Tests(unittest.TestCase):
         app = main.ClippingApp.__new__(main.ClippingApp)
         for name, value in {"caption_style": "boxed", "caption_placement": "auto",
                             "content_type": "Anime/Animation", "highlight_preference": "Comedy",
-                            "length_profile": "Story", "editorial_endpoint": "", "editorial_model": ""}.items():
+                            "length_profile": "Story", "context_margin": 4.0,
+                            "include_ranges": "", "exclude_ranges": "",
+                            "editorial_endpoint": "", "editorial_model": ""}.items():
             setattr(app, name, SimpleNamespace(get=lambda value=value: value))
         app._save_preferences = lambda: None
         with patch.dict(os.environ, {}, clear=False):
@@ -201,6 +203,15 @@ class Task05Tests(unittest.TestCase):
             self.assertEqual("Anime/Animation", os.environ["CLIPPER_CONTENT_TYPE"])
             self.assertEqual("Comedy", os.environ["CLIPPER_HIGHLIGHT_PREFERENCE"])
             self.assertEqual("Story", os.environ["CLIPPER_CLIP_LENGTH_PROFILE"])
+            self.assertEqual("4.0", os.environ["CLIPPER_CONTEXT_MARGIN"])
+
+    def test_default_auto_clip_duration_is_twenty_to_sixty_seconds(self):
+        import main
+        app = main.ClippingApp.__new__(main.ClippingApp)
+        app.length_profile = SimpleNamespace(get=lambda: "Auto")
+        app.minimum = SimpleNamespace(get=lambda: 20)
+        app.maximum = SimpleNamespace(get=lambda: 60)
+        self.assertEqual((20, 60), main.ClippingApp._clip_lengths(app))
 
 
 if __name__ == "__main__":

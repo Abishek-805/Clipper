@@ -24,12 +24,13 @@ from vision import (VisionModelManager, extract_candidate_frames, read_semantic_
                     semantic_cache_key, write_semantic_cache)
 
 VIDEO_EXTENSIONS = {".mp4", ".mkv", ".mov", ".avi", ".webm", ".m4v"}
-ANALYSIS_ENGINE_VERSION = "task06b-selected-stream-v1"
+ANALYSIS_ENGINE_VERSION = "task06c-sampled-selected-stream-v1"
 CANDIDATE_SCORE_WEIGHTS = {
-    "average_motion": 0.22, "peak_motion": 0.10, "motion_consistency": 0.08,
-    "average_audio_energy": 0.20, "audio_energy_variation": 0.08,
-    "speech_density": 0.10, "dialogue_completeness": 0.08,
+    "average_motion": 0.20, "peak_motion": 0.10, "motion_consistency": 0.08,
+    "average_audio_energy": 0.18, "audio_energy_variation": 0.08,
+    "speech_density": 0.08, "dialogue_completeness": 0.08,
     "scene_transition_quality": 0.08, "boundary_confidence": 0.06,
+    "opening_hook_quality": 0.04, "duration_quality": 0.03,
 }
 CANDIDATE_SCORE_PENALTIES = {"excessive_silence": 0.12, "static_interval": 0.04}
 
@@ -193,37 +194,52 @@ def _motion(path: Path, duration: float, cancel: threading.Event, stats: dict | 
         raise RuntimeError(f"OpenCV could not decode video: {path.name}")
     values = [0.0] * max(1, math.ceil(duration))
     previous = None
-    second = -1
-    frames_read = 0
+    previous_time = 0.0
+    frame_index = 0
+    frames_read = sampled = 0
+    fps = cap.get(cv2.CAP_PROP_FPS) or 24.0
+    frame_step = max(1, round(fps / 2))
     try:
         while True:
             if cancel.is_set():
                 raise InterruptedError("Processing cancelled")
-            ok, frame = cap.read()
+            ok = cap.grab()
             if not ok:
                 break
             frames_read += 1
-            pos = max(0, int(cap.get(cv2.CAP_PROP_POS_MSEC) / 1000))
-            if pos != second:
-                gray = cv2.cvtColor(cv2.resize(frame, (160, 90)), cv2.COLOR_BGR2GRAY)
-                if previous is not None and second < len(values):
-                    values[second] = float(cv2.absdiff(previous, gray).mean())
-                previous, second = gray, pos
+            if frame_index % frame_step == 0:
+                ok, frame = cap.retrieve()
+                if ok:
+                    timestamp = frame_index / fps
+                    gray = cv2.cvtColor(cv2.resize(frame, (160, 90)), cv2.COLOR_BGR2GRAY)
+                    if previous is not None:
+                        second = min(len(values) - 1, max(0, int((previous_time + timestamp) / 2)))
+                        values[second] = max(values[second], float(cv2.absdiff(previous, gray).mean()))
+                    previous, previous_time = gray, timestamp
+                    sampled += 1
+            frame_index += 1
     finally:
         cap.release()
     if not frames_read:
         raise RuntimeError(f"OpenCV decoded no frames: {path.name}")
     if stats is not None:
-        stats["frames_decoded"] = frames_read
+        stats.update(frames_decoded=frames_read, frames_sampled=sampled, sample_rate_fps=round(fps / frame_step, 2))
     return values
 
 
 def _scene_cuts(path: Path) -> tuple[list[float], str]:
     try:
-        from scenedetect import ContentDetector, detect
-        scenes = detect(str(path), ContentDetector(threshold=27.0), show_progress=False)
+        from scenedetect import ContentDetector, SceneManager, open_video
+        video = open_video(str(path))
+        try:
+            manager = SceneManager()
+            manager.add_detector(ContentDetector(threshold=27.0))
+            manager.detect_scenes(video=video, frame_skip=2, show_progress=False)
+            scenes = manager.get_scene_list()
+        finally:
+            video.close()
         cuts = [float(a.get_seconds()) for a, _ in scenes[1:]]
-        return cuts, f"{len(cuts)} cut(s) found"
+        return cuts, f"{len(cuts)} cut(s) found · sampled at approximately 8 fps"
     except ImportError as exc:
         return [], f"scene detection unavailable: {exc}"
     except Exception as exc:
@@ -517,7 +533,7 @@ def _interval_iou(first: dict, second: dict) -> float:
 
 def generate_candidates(duration: float, motion: list[float], audio: list[float], cuts: list[float], words: list[Word],
                         min_length: int = 20, max_length: int = 55,
-                        cancel: threading.Event | None = None) -> dict:
+                        cancel: threading.Event | None = None, context_margin: float = 4.0) -> dict:
     """Propose scene, sustained-activity, and dialogue intervals independently of scoring."""
     minimum, maximum = max(1.0, float(min_length)), max(float(min_length), float(max_length))
     result = {"candidates": [], "rejections": [], "activity_regions": [], "speech_regions": [],
@@ -580,7 +596,9 @@ def generate_candidates(duration: float, motion: list[float], audio: list[float]
         end_index = index
         while end_index < len(dialogue):
             phrase_end = dialogue[end_index]["end"]
-            raw_start = max(0.0, unit["start"] - 2.5)
+            raw_start = max(0.0, unit["start"] - min(2.5, context_margin))
+            if index and unit["start"] - dialogue[index - 1]["end"] <= context_margin:
+                raw_start = min(raw_start, dialogue[index - 1]["start"])
             raw_end = min(duration, phrase_end + 2.5)
             if raw_end - raw_start > maximum:
                 break
@@ -601,8 +619,12 @@ def refine_clip_boundaries(candidate: dict, duration: float, words: list[Word], 
     start, end = candidate["start"], candidate["end"]
     original = (start, end)
     units = speech_regions if speech_regions is not None else extract_speech_regions(words)
-    start_unit = next((u for u in units if u["start"] <= start < u["end"] and start - u["start"] <= context_margin), None)
-    end_unit = next((u for u in units if u["start"] < end < u["end"] and u["end"] - end <= context_margin), None)
+    start_unit = next((u for u in units if u["start"] < start < u["end"]), None)
+    end_unit = next((u for u in units if u["start"] < end < u["end"]), None)
+    if not start_unit:
+        start_unit = next((u for u in reversed(units) if u["end"] <= start and start - u["end"] <= context_margin), None)
+    if not end_unit:
+        end_unit = next((u for u in units if end <= u["end"] and u["end"] - end <= context_margin), None)
     if start_unit:
         start = start_unit["start"]
     if end_unit:
@@ -624,14 +646,8 @@ def refine_clip_boundaries(candidate: dict, duration: float, words: list[Word], 
         return left, right
     start, end = snap_to_words(start, end)
     start, end = max(0.0, start), min(duration, end)
-    if end - start > max_length:
-        end = start + max_length
-        for word in words:
-            if word.start < end < word.end:
-                end = word.start
-                break
     boundary_valid = min_length <= end - start <= max_length and end > start
-    if not boundary_valid:
+    if not boundary_valid and start_unit is None and end_unit is None:
         start, end = snap_to_words(*original)
         start, end = max(0.0, start), min(duration, end)
         boundary_valid = min_length <= end - start <= max_length and end > start
@@ -662,6 +678,16 @@ def _candidate_features(candidate: dict, visual: list[float], sound: list[float]
     speech_seconds = {int(word.start) for word in words if start <= word.start < end}
     complete_units = [u for u in units if u["start"] < end and u["end"] > start]
     complete_ratio = (sum(u["start"] >= start and u["end"] <= end for u in complete_units) / len(complete_units)) if complete_units else 0.0
+    opening = next((u for u in units if u["start"] < end and u["end"] > start), None)
+    if not opening:
+        hook_quality = 0.5
+    elif start > opening["start"] + 0.05:
+        hook_quality = 0.0
+    else:
+        lead_in = opening["start"] - start
+        hook_quality = 1.0 if lead_in <= 4.0 else max(0.5, 1.0 - (lead_in - 4.0) / 20.0)
+    duration_quality = (1.0 if end - start >= 45 and complete_ratio >= 0.8 else
+                        0.5 if complete_ratio >= 0.8 else 0.0)
     internal = [c for c in cuts if start < c < end]
     edge_quality = min(1.0, sum(min(abs(start-c), abs(end-c)) <= 1.5 for c in cuts) / 2.0)
     if "scene" in candidate["sources"]:
@@ -675,6 +701,7 @@ def _candidate_features(candidate: dict, visual: list[float], sound: list[float]
             "motion_consistency": round(motion_consistency, 3), "average_audio_energy": round(average_audio, 3),
             "audio_energy_variation": round(audio_variation, 3), "speech_density": round(speech_density, 3),
             "dialogue_completeness": round(complete_ratio, 3), "scene_transition_quality": round(edge_quality, 3),
+            "opening_hook_quality": round(hook_quality, 3), "duration_quality": round(duration_quality, 3),
             "excessive_silence": round(still_silence, 3), "static_interval": round(static_interval, 3),
             "scene_changes": len(internal)}
 
@@ -733,6 +760,8 @@ def select_diverse_candidates(candidates: list[dict], count: int, duration: floa
     categories = {c.get("semantic_category") for c in remaining
                   if c.get("semantic_category") not in (None, "UNCERTAIN")}
     use_category_diversity = len(categories) > 1 and category_weight > 0
+    region_count = max(2, min(5, count))
+    best_score = max((item["score"] for item in remaining), default=0)
     for candidate in candidates:
         candidate.pop("selection_diversity", None)
     rejected.extend({"start": c["start"], "end": c["end"], "reason": "invalid refined boundary"}
@@ -746,13 +775,19 @@ def select_diverse_candidates(candidates: list[dict], count: int, duration: floa
             center = (item["start"] + item["end"]) / 2
             distance = min((abs(center - (clip["start"] + clip["end"]) / 2) for clip in selected), default=duration)
             temporal = 0.7 + 0.3 * min(1.0, distance / max(1.0, duration / 4))
+            region = min(region_count - 1, int(center / max(1.0, duration) * region_count))
+            represented = {clip.get("selection_diversity", {}).get("temporal_region") for clip in selected}
+            coverage_bonus = (0.08 if item["score"] >= best_score * 0.85 and region not in represented
+                              and len(represented) < region_count else 0.0)
             category = item.get("semantic_category")
             category_bonus = category_weight if use_category_diversity and category not in (None, "UNCERTAIN") and all(
                 clip.get("semantic_category") != category for clip in selected) else 0.0
             item["_selection_diversity"] = {"temporal_factor": round(temporal, 4),
                                             "category_bonus": round(category_bonus, 4),
+                                            "temporal_region": region,
+                                            "coverage_bonus": coverage_bonus,
                                             "category_weight": category_weight if use_category_diversity else 0.0}
-            return item["score"] * temporal + category_bonus
+            return item["score"] * temporal + category_bonus + coverage_bonus
         remaining.sort(key=diversity_score, reverse=True)
         candidate = remaining.pop(0)
         conflict = next((prior for prior in selected if _interval_iou(candidate, prior) > 0.35 or
@@ -781,25 +816,73 @@ def select_diverse_candidates(candidates: list[dict], count: int, duration: floa
     return sorted(selected, key=lambda item: item["start"]), rejected
 
 
+def parse_time_ranges(value: str) -> list[tuple[float, float]]:
+    """Parse semicolon-separated source-time ranges in seconds or HH:MM:SS form."""
+    def seconds(text: str) -> float:
+        text = text.strip()
+        if re.fullmatch(r"\d+(?:\.\d+)?", text):
+            result = float(text)
+        elif re.fullmatch(r"\d{1,2}:\d{2}:\d{2}(?:\.\d+)?", text):
+            hours, minutes, secs = text.split(":")
+            result = int(hours) * 3600 + int(minutes) * 60 + float(secs)
+            if int(minutes) >= 60 or float(secs) >= 60:
+                raise ValueError(f"Invalid timecode: {text}")
+        else:
+            raise ValueError(f"Invalid time value: {text}")
+        if not math.isfinite(result) or result < 0:
+            raise ValueError(f"Time must be finite and nonnegative: {text}")
+        return result
+
+    ranges = []
+    for item in filter(str.strip, value.split(";")):
+        parts = item.split("-", 1)
+        if len(parts) != 2:
+            raise ValueError(f"Use start-end ranges separated by semicolons: {item}")
+        start, end = seconds(parts[0]), seconds(parts[1])
+        if end <= start:
+            raise ValueError(f"Range end must be after its start: {item}")
+        ranges.append((start, end))
+    return ranges
+
+
 def select_clips(duration: float, motion: list[float], audio: list[float], cuts: list[float], words: list[Word],
                  count: int = 5, min_length: int = 20, max_length: int = 55,
                  minimum_distance: float = 5.0, context_margin: float = 2.5,
-                 scoring_weights: dict | None = None, cancel: threading.Event | None = None) -> dict:
-    generated = generate_candidates(duration, motion, audio, cuts, words, min_length, max_length, cancel)
+                 scoring_weights: dict | None = None, cancel: threading.Event | None = None,
+                 include_ranges: list[tuple[float, float]] | None = None,
+                 exclude_ranges: list[tuple[float, float]] | None = None) -> dict:
+    generated = generate_candidates(duration, motion, audio, cuts, words, min_length, max_length, cancel, context_margin)
     candidates = rank_candidates(generated["candidates"], duration, motion, audio, cuts, words,
                                  min_length, max_length, context_margin, scoring_weights, cancel)
-    credit_rejections, eligible = [], []
+    include_ranges, exclude_ranges = include_ranges or [], exclude_ranges or []
+    range_rejections = []
+    in_range = []
+    for candidate in candidates:
+        interval = (candidate["start"], candidate["end"])
+        if include_ranges and not any(left <= interval[0] and interval[1] <= right for left, right in include_ranges):
+            range_rejections.append({"start": interval[0], "end": interval[1], "reason": "outside manual include ranges"})
+        elif any(interval[0] < right and interval[1] > left for left, right in exclude_ranges):
+            range_rejections.append({"start": interval[0], "end": interval[1], "reason": "overlaps manual exclude range"})
+        else:
+            in_range.append(candidate)
+    candidates = in_range
+    credit_rejections, boundary_rejections, eligible = [], [], []
     valid_words = _valid_words(words, duration)
     for candidate in candidates:
         features = candidate["feature_scores"]
         has_dialogue = any(
             word.end > candidate["start"] and word.start < candidate["end"] for word in valid_words)
-        likely_credits = (not has_dialogue and features.get("average_motion", 0) < .16 and
-                          (candidate["start"] >= duration * .84 or features.get("average_audio_energy", 0) < .08))
+        quiet_static = (not has_dialogue and features.get("average_motion", 0) < .16 and
+                        features.get("average_audio_energy", 0) < .08)
+        likely_credits = quiet_static and (candidate["start"] >= duration * .84 or candidate["start"] <= duration * .08)
         if likely_credits:
             candidate["selected"] = False
             credit_rejections.append({"start": candidate["start"], "end": candidate["end"],
-                                      "reason": "likely title/credit material: low motion and no dialogue evidence"})
+                                      "reason": "likely intro/title/credit material: low motion/audio and no dialogue evidence"})
+        elif not candidate.get("boundary_valid", True):
+            candidate["selected"] = False
+            boundary_rejections.append({"start": candidate["start"], "end": candidate["end"],
+                                        "reason": "invalid refined boundary"})
         else:
             eligible.append(candidate)
     unique, duplicate_rejections = deduplicate_candidates(eligible, cancel=cancel)
@@ -810,7 +893,9 @@ def select_clips(duration: float, motion: list[float], audio: list[float], cuts:
     generated["candidate_count"] = len(generated["candidates"])
     generated["candidates"] = candidates
     generated["selected"] = selected
+    generated["rejections"].extend(range_rejections)
     generated["rejections"].extend(credit_rejections)
+    generated["rejections"].extend(boundary_rejections)
     generated["rejections"].extend(duplicate_rejections)
     generated["rejections"].extend(selection_rejections)
     generated["rejected_count"] = len(generated["rejections"])
@@ -1126,7 +1211,12 @@ def process_video(path: Path, output_root: Path, model_size: str, clip_count: in
     analysis_cache_path = folder / "analysis_cache.json"
     progress(f"Analyzing {path.name}: {info.width}×{info.height}, {info.duration:.0f}s")
     source_stat = path.stat()
+    context_margin = float(os.getenv("CLIPPER_CONTEXT_MARGIN", "4"))
+    include_ranges = parse_time_ranges(os.getenv("CLIPPER_INCLUDE_RANGES", ""))
+    exclude_ranges = parse_time_ranges(os.getenv("CLIPPER_EXCLUDE_RANGES", ""))
     settings = {"model": model_size, "clip_count": clip_count, "min_length": min_length, "max_length": max_length,
+                "context_margin": context_margin,
+                "include_ranges": include_ranges, "exclude_ranges": exclude_ranges,
                 "encoder": encoder, "candidate_engine": "scene-aware-variable-v1",
                 "semantic_enabled": semantic_enabled, "transcription_enabled": transcription_enabled,
                 "editorial_engine": "editorial-v1", "local_editorial_model": os.getenv("CLIPPER_LOCAL_LLM_MODEL", ""),
@@ -1242,7 +1332,9 @@ def process_video(path: Path, output_root: Path, model_size: str, clip_count: in
     else:
         progress(f"Transcription {transcript.status} · {transcript.device}/{transcript.precision} · {len(words)} words")
     stage_started = time.perf_counter()
-    selection = select_clips(info.duration, motion, energy, cuts, words, clip_count, min_length, max_length, cancel=cancel)
+    selection = select_clips(info.duration, motion, energy, cuts, words, clip_count, min_length, max_length,
+                             context_margin=context_margin, cancel=cancel,
+                             include_ranges=include_ranges, exclude_ranges=exclude_ranges)
     stage_timings["candidate_selection_seconds"] = round(time.perf_counter() - stage_started, 3)
     editorial_summary = {"status": "unavailable", "provider": None, "prompt_version": "editorial-v1",
                          "quality_floor": QUALITY_FLOOR, "assessed": 0,

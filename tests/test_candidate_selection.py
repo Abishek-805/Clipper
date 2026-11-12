@@ -10,7 +10,7 @@ import clipper
 from clipper import (
     VideoInfo, Word, _read_analysis_cache, _robust_normalize, deduplicate_candidates, detect_activity_regions, extract_speech_regions,
     generate_candidates, process_video, rank_candidates, refine_clip_boundaries,
-    select_clips, select_diverse_candidates,
+    select_clips, select_diverse_candidates, parse_time_ranges,
 )
 
 
@@ -88,6 +88,13 @@ class CandidateSelectionTests(unittest.TestCase):
     def test_quiet_static_source_returns_fewer_than_requested(self):
         self.assertEqual([], select_clips(120, [0.0] * 120, [0.0] * 120, [], [], 5, 20, 55)["selected"])
 
+    def test_quiet_static_opening_and_ending_candidates_are_rejected(self):
+        cuts = [20, 40, 60, 80, 100]
+        report = select_clips(120, [0.0] * 120, [0.0] * 120, cuts, [], 5, 20, 60)
+        reasons = [item["reason"] for item in report["rejections"]]
+        self.assertTrue(any("intro/title/credit" in reason for reason in reasons))
+        self.assertEqual([], report["selected"])
+
     def test_word_boundaries_are_not_cut_mid_word(self):
         words = [Word(9.5, 10.2, "word"), Word(29.5, 30.3, "ending.")]
         candidate = {"start": 9.8, "end": 29.8, "sources": ["activity"]}
@@ -104,9 +111,37 @@ class CandidateSelectionTests(unittest.TestCase):
 
     def test_boundary_context_margin_is_configurable(self):
         words = [Word(10, 10.3, "A"), Word(10.3, 11, "sentence.")]
-        candidate = {"start": 10.5, "end": 35.0, "sources": ["speech"]}
+        candidate = {"start": 12.0, "end": 35.0, "sources": ["speech"]}
+        included = refine_clip_boundaries(candidate, 60, words, [], 20, 55, context_margin=3)
         refined = refine_clip_boundaries(candidate, 60, words, [], 20, 55, context_margin=0.1)
-        self.assertEqual(10.3, refined["start"])
+        self.assertEqual(10, included["start"])
+        self.assertEqual(12, refined["start"])
+
+    def test_mid_sentence_opening_is_extended_to_complete_speech_unit(self):
+        words = [Word(10, 10.2, "I"), Word(10.2, 10.5, "think"), Word(10.5, 11, "so."),
+                 Word(30, 30.2, "That"), Word(30.2, 31, "works.")]
+        refined = refine_clip_boundaries({"start": 10.7, "end": 31, "sources": ["speech"]},
+                                         60, words, [], 20, 55, context_margin=4)
+        self.assertEqual(10, refined["start"])
+        self.assertTrue(refined["boundary_valid"])
+
+    def test_sentence_extension_that_exceeds_maximum_is_rejected(self):
+        words = [Word(54, 56, "continuation.")]
+        refined = refine_clip_boundaries({"start": 20, "end": 55, "sources": ["activity"]},
+                                         70, words, [], 20, 35)
+        self.assertFalse(refined["boundary_valid"])
+
+    def test_action_only_candidate_has_neutral_hook_score(self):
+        candidate = {"start": 20, "end": 50, "sources": ["activity"]}
+        ranked = rank_candidates([candidate], 80, [0.0] * 80, [0.0] * 80, [], [], 20, 55)
+        self.assertEqual(0.5, ranked[0]["feature_scores"]["opening_hook_quality"])
+
+    def test_time_ranges_accept_seconds_and_timecodes(self):
+        self.assertEqual([(10.5, 30.0), (120.0, 180.25)],
+                         parse_time_ranges("10.5-30; 00:02:00-00:03:00.25"))
+        for invalid in ("4-4", "5-2", "00:99:00-00:99:30", "x-y"):
+            with self.subTest(invalid=invalid), self.assertRaises(ValueError):
+                parse_time_ranges(invalid)
 
     def test_scoring_weights_can_be_overridden(self):
         candidate = {"start": 20.0, "end": 40.0, "sources": ["activity"], "scene_edges": [False, False]}
@@ -145,6 +180,25 @@ class CandidateSelectionTests(unittest.TestCase):
         selected, _ = select_diverse_candidates(values, 2, 100, category_weight=.15)
         self.assertEqual(["ACTION_COMBAT", "COMEDY_REACTION"], [c["semantic_category"] for c in selected])
         self.assertEqual(.15, selected[1]["selection_diversity"]["category_bonus"])
+
+    def test_coverage_bonus_spreads_quality_comparable_candidates(self):
+        features = {"average_motion": .5, "average_audio_energy": .3, "speech_density": .2,
+                    "dialogue_completeness": .8, "scene_transition_quality": .2}
+        values = [{"start": 2, "end": 22, "score": .90, "feature_scores": features.copy()},
+                  {"start": 26, "end": 46, "score": .87, "feature_scores": features.copy()},
+                  {"start": 62, "end": 82, "score": .82, "feature_scores": features.copy()}]
+        selected, _ = select_diverse_candidates(values, 2, 100)
+        self.assertEqual([0, 1], [item["selection_diversity"]["temporal_region"] for item in selected])
+        self.assertEqual(.08, selected[1]["selection_diversity"]["coverage_bonus"])
+
+    def test_manual_include_and_exclude_ranges_filter_candidates(self):
+        motion = [0.0] * 120
+        motion[50:70] = [8.0] * 20
+        report = select_clips(120, motion, [0.0] * 120, [30, 50, 70, 90], [], 5, 20, 55,
+                              include_ranges=[(40, 100)], exclude_ranges=[(60, 65)])
+        self.assertTrue(all(40 <= clip["start"] and clip["end"] <= 100 for clip in report["selected"]))
+        self.assertTrue(any(item["reason"] == "outside manual include ranges" for item in report["rejections"]))
+        self.assertTrue(any(item["reason"] == "overlaps manual exclude range" for item in report["rejections"]))
 
     def test_single_category_and_heuristic_fallback_add_no_category_bonus(self):
         candidates = []

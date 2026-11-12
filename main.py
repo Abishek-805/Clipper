@@ -12,7 +12,7 @@ import tkinter as tk
 from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 
-from clipper import process_video, probe, scan_videos
+from clipper import parse_time_ranges, process_video, probe, scan_videos
 from diagnostics import collect_diagnostics
 from model_manager import ModelManager, gpu_memory_usage
 from vision import VisionModelManager, vision_installation_status
@@ -66,8 +66,11 @@ class ClippingApp(tk.Tk):
             preferences = {}
         self.folder = tk.StringVar(value=preferences.get("last_folder", ""))
         self.count = tk.IntVar(value=5)
-        self.minimum = tk.IntVar(value=20)
-        self.maximum = tk.IntVar(value=55)
+        self.minimum = tk.IntVar(value=preferences.get("minimum", 20))
+        self.maximum = tk.IntVar(value=preferences.get("maximum", 60))
+        self.context_margin = tk.DoubleVar(value=preferences.get("context_margin", 4.0))
+        self.include_ranges = tk.StringVar(value=preferences.get("include_ranges", ""))
+        self.exclude_ranges = tk.StringVar(value=preferences.get("exclude_ranges", ""))
         self.model = tk.StringVar(value="small")
         self.encoder = tk.StringVar(value="auto")
         self.semantic = tk.BooleanVar(value=False)
@@ -183,6 +186,16 @@ class ClippingApp(tk.Tk):
                 ("Length", self.length_profile, ("Auto", "Short", "Standard", "Story"), 11)):
             ttk.Label(content, text=label, style="Sub.TLabel").pack(side="left")
             ttk.Combobox(content, textvariable=variable, values=values, width=width, state="readonly").pack(side="left", padx=(5, 14))
+        ttk.Label(content, text="Hook context (s)", style="Sub.TLabel").pack(side="left")
+        ttk.Spinbox(content, from_=0, to=15, increment=0.5, textvariable=self.context_margin, width=6).pack(side="left", padx=5)
+        ttk.Label(root, text="Automatic target: 45–60 seconds when speech is complete; shorter moments remain eligible.",
+                  style="Sub.TLabel").pack(anchor="w", pady=(0, 5))
+        ranges = ttk.LabelFrame(root, text=" Optional source-time ranges · seconds or HH:MM:SS, separated by semicolons ", padding=(10, 5))
+        ranges.pack(fill="x", pady=(0, 10))
+        ttk.Label(ranges, text="Include", style="Sub.TLabel").pack(side="left")
+        ttk.Entry(ranges, textvariable=self.include_ranges, width=27).pack(side="left", padx=(5, 15))
+        ttk.Label(ranges, text="Exclude", style="Sub.TLabel").pack(side="left")
+        ttk.Entry(ranges, textvariable=self.exclude_ranges, width=27).pack(side="left", padx=5)
         nightly = ttk.LabelFrame(root, text=" Nightly queue ", padding=(12, 7))
         nightly.pack(fill="x", pady=(0, 12))
         for label, variable, upper in (("Shorts this session", self.target, 10), ("Max hours", self.max_hours, 24), ("Microbatch", self.batch_size, 4)):
@@ -276,6 +289,9 @@ class ClippingApp(tk.Tk):
                                   "content_type": self.content_type.get(),
                                   "highlight_preference": self.highlight_preference.get(),
                                   "length_profile": self.length_profile.get(),
+                                  "minimum": self.minimum.get(), "maximum": self.maximum.get(),
+                                  "context_margin": self.context_margin.get(),
+                                  "include_ranges": self.include_ranges.get(), "exclude_ranges": self.exclude_ranges.get(),
                                   "editorial_endpoint": self.editorial_endpoint.get(),
                                   "editorial_model": self.editorial_model.get()})
 
@@ -290,6 +306,9 @@ class ClippingApp(tk.Tk):
         os.environ["CLIPPER_CONTENT_TYPE"] = self.content_type.get()
         os.environ["CLIPPER_HIGHLIGHT_PREFERENCE"] = self.highlight_preference.get()
         os.environ["CLIPPER_CLIP_LENGTH_PROFILE"] = self.length_profile.get()
+        os.environ["CLIPPER_CONTEXT_MARGIN"] = str(self.context_margin.get())
+        os.environ["CLIPPER_INCLUDE_RANGES"] = self.include_ranges.get()
+        os.environ["CLIPPER_EXCLUDE_RANGES"] = self.exclude_ranges.get()
         if self.editorial_endpoint.get().strip():
             os.environ["CLIPPER_LOCAL_LLM_ENDPOINT"] = self.editorial_endpoint.get().strip()
         else:
@@ -303,6 +322,17 @@ class ClippingApp(tk.Tk):
     def _clip_lengths(self):
         return {"Auto": (self.minimum.get(), self.maximum.get()), "Short": (12, 30),
                 "Standard": (20, 60), "Story": (40, 90)}[self.length_profile.get()]
+
+    def _validate_editorial_controls(self):
+        try:
+            parse_time_ranges(self.include_ranges.get())
+            parse_time_ranges(self.exclude_ranges.get())
+            if not 0 <= self.context_margin.get() <= 15:
+                raise ValueError("Hook context must be between 0 and 15 seconds.")
+        except (ValueError, TypeError) as exc:
+            messagebox.showerror("Invalid source-time settings", str(exc), parent=self)
+            return False
+        return True
 
     def _choose_single(self):
         if self.running:
@@ -357,6 +387,8 @@ class ClippingApp(tk.Tk):
         if self.semantic.get() and not vision_installation_status().get("ready"):
             messagebox.showerror("Vision model unavailable", "Disable optional semantic analysis or use a verified local model installation.", parent=self)
             return
+        if not self._validate_editorial_controls():
+            return
         self._configure_local_options()
         self.running = True
         self.runner = None
@@ -384,7 +416,7 @@ class ClippingApp(tk.Tk):
                 self.queue.put(("log", message))
                 self.queue.put(("status", message))
             import time
-            output_root = OUTPUT / f"Task06B-{time.strftime('%Y%m%d-%H%M%S')}"
+            output_root = OUTPUT / f"Task06C-{time.strftime('%Y%m%d-%H%M%S')}"
             count = process_video(source, output_root, *settings[:4], self.single_cancel, progress, settings[4], manager,
                                   settings[5], vision, transcription_enabled=transcription,
                                   audio_index=audio_index, caption_source=caption_source,
@@ -493,6 +525,8 @@ class ClippingApp(tk.Tk):
                 not 1 <= self.target.get() <= 10 or not 1 <= self.max_hours.get() <= 24 or
                 not 1 <= self.batch_size.get() <= 4):
             messagebox.showerror("Invalid settings", "Check clip duration, target (1–10), session hours (1–24), and microbatch (1–4).")
+            return
+        if not self._validate_editorial_controls():
             return
         self.queue_store.scan(Path(self.folder.get()), videos)
         self._import_legacy_interrupted_job()
