@@ -1,0 +1,10 @@
+.venv/
+__pycache__/
+*.py[cod]
+Shorts_Output/
+logs/
+*.log
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+*.egg-info/
