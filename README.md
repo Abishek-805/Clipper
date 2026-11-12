@@ -16,7 +16,7 @@ Faster-Whisper downloads the selected multilingual model (`small` by default, ab
 
 If Clipper closes while processing, it stops after the current operation, keeps completed clips, and records the unfinished job under the user's local application data. The next launch asks before resuming. Choosing **No** leaves the interrupted job available for a later launch.
 
-The portrait layout keeps the full source frame visible over a blurred fill, preventing important action from being cropped. Captions are burned in with word highlighting and are also available as SRT. Transcription status distinguishes no audio, no speech, unavailable model support and transcription failure in the GUI log and analysis.json; clips still render without invented subtitles.
+Portrait framing is planned separately for each shot. Clipper uses low-resolution face and motion/saliency signals when they support a safe crop, and otherwise keeps the full source frame visible over a blurred fill. Caption placement can avoid detected faces, action regions and likely lower-frame source text, or use a fixed lower/middle/upper override. These are lightweight heuristics, not semantic tracking or OCR. The GUI review table lists each output with a thumbnail and actions for playback, reveal, SRT, analysis, contact sheet and framing debug. Transcription status distinguishes no audio, no speech, unavailable model support and transcription failure in the GUI log and analysis.json; clips still render without invented subtitles.
 
 Candidate selection proposes intervals from scene groups, sustained signal activity, and pause/sentence-grouped dialogue, then scores normalized audio, motion, speech, scene continuity, and boundary features. Overlapping and low-scoring candidates are rejected; short sources below the minimum are skipped and recorded. The analysis_cache.json file stores source-fingerprinted motion, audio, and scene signals for reuse when clip settings change. The GUI status and analysis.json show candidate counts, selected durations, feature scores, and rejection reasons.
 
@@ -45,6 +45,8 @@ Install PyTorch separately from its [official Windows installation selector](htt
 
 Run python diagnostics.py to check FFmpeg/FFprobe, NVIDIA hardware, CUDA support, and usable encoders. Run python -m unittest discover -s tests -v for the synthetic rendering integration suite. NVENC tests skip if the runtime encoder probe fails.
 Run python benchmark_candidates.py to regenerate the deterministic signal benchmark and its JSON/Markdown reports under reports/.
+
+`python golden_set.py evaluation/golden_set.template.json Shorts_Output/<source>/analysis.json` compares system candidates with human annotations. Replace the template example with actual human judgements first; the evaluator refuses to report metrics before five labels.
 
 Whisper loads only after **Start Automatic Clipping** and is reused across videos in one batch. Automatic mode prefers CUDA `int8_float16` when the installed CTranslate2 runtime reports support, with CPU int8 fallback; CUDA OOM during inference retries once on CPU. Transcription cache entries are keyed to the source file and transcription settings and are replaced only after a complete successful transcription.
 

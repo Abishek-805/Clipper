@@ -16,14 +16,23 @@ Task 01–04B paths were inspected before editing: `clipper.py` owns ingestion, 
 
 Reference source links: [AutoClip](https://github.com/artbyjazi/autoclip), [Cutawan](https://github.com/JeremySNR/cutawan), [OpenClipper](https://github.com/GrepCut/OpenClipper), [MediaPipe AutoFlip](https://github.com/google-ai-edge/mediapipe/blob/master/docs/solutions/autoflip.md), [Faster-Whisper](https://github.com/SYSTRAN/faster-whisper), [SmolVLM2 model card](https://huggingface.co/HuggingFaceTB/SmolVLM2-500M-Video-Instruct), and [FFmpeg filters](https://ffmpeg.org/ffmpeg-filters.html).
 
-## New boundaries and defaults
+## Task 05C implementation update
+
+- OpenClipper's scene-local focus and fallback concepts are now applied by `reframing.py`. Clipper samples at most 48 frames per selected clip, uses OpenCV's installed Haar cascade plus edge/optical-flow column saliency, smooths focus only inside each detected shot, and validates even crop bounds. No persistent subject identity tracker or heavyweight object detector was added. Multiple distant faces and uncertain animation/action fall back to full-frame contain.
+- Each shot is rendered independently in FFmpeg and concatenated after normalizing dimensions and sample aspect ratio. Scene cuts reset crop and caption placement state. The old blurred-background fill remains the contain path.
+- Caption placement scores normalized face/action/source-text regions against three anchors. Source text uses a simple lower-frame morphology heuristic, not OCR. Fixed placement overrides continue to work. This is best-effort obstruction avoidance, not semantic face/action understanding.
+- The GUI now displays individual validated clips and operating-system actions for playback, reveal, SRT, manifest, contact sheet and reframe debug. Content type/highlight preferences are saved, fingerprinted, and passed to the optional editorial prompt. A length profile maps to existing clip duration bounds.
+- `storyboard.py` records a bounded candidate sample archive and `golden_set.py` supplies a human-only annotation schema and evaluator. Evaluation needs at least five labels; no labels or accuracy are fabricated.
+- No dependency, weights, database schema, queue code, or pinned model revision changed. The active environment has OpenCV, Faster-Whisper and CUDA-capable CTranslate2, but optional SmolVLM2 packages/weights and the Whisper small model weights are unavailable. No model inference was run.
+
+## Existing boundaries and defaults
 
 - Activity scoring still proposes moments. An optional narrative assessment is separate, deterministic at the scoring layer, and only runs when the user configures both a loopback endpoint and a model name. It will not send transcript text to a non-loopback server, follow redirects off loopback, call a cloud provider, or download a model. Missing/invalid provider configuration is reported as unavailable; existing activity selection remains functional.
 - Editorial score dimensions use the prompt's initial weights (hook 20%, coherence 20%, payoff 20%, impact 15%, self-containment 10%, visual clarity 10%, audio clarity 5%). These are engineering defaults, not calibrated engagement predictions. Model scores are bounded 0–5, and selected model-assessed candidates must meet the 0.58 quality floor.
 - Editorial results use prompt version `editorial-v1`; frame sampling is capped at 12 timestamps and its semantic cache key changes with `candidate-v2-adaptive`. Text is cached separately. Candidate sources and the SQLite queue remain unchanged.
-- Caption styles are `bold_pop`, `karaoke`, `cinematic_minimal`, and `boxed`; captions group at punctuation, pauses, width and style limits. SRT and ASS use real word timestamps. Placement can be set to lower, middle or upper; automatic face/action avoidance is not implemented.
+- Caption styles are `bold_pop`, `karaoke`, `cinematic_minimal`, and `boxed`; captions group at punctuation, pauses, width and style limits. SRT and ASS use real word timestamps. Placement can be fixed or automatic using available per-shot obstruction heuristics.
 - Single-episode mode calls the existing `process_video()` with the one chosen path. It does not invoke directory scanning, create queue records, or change the nightly backlog.
-- A contact sheet and `clip_review.md` are emitted after successful renders. Full storyboard frame archives and GUI per-clip playback/reveal controls remain future work.
+- A contact sheet, `clip_review.md`, capped candidate storyboard and per-clip playback/reveal/review controls are available after successful renders.
 
 ## Licensing and code reuse
 
@@ -31,4 +40,4 @@ No source code, models, fonts or media assets were copied from the reference rep
 
 ## Limits that affect the next acceptance step
 
-This change does not implement subject tracking or scene-specific crop paths. Existing blurred-background full-frame composition remains the safe rendering fallback. Adaptive caption placement, category/content-type controls, GUI per-clip review actions, and a golden-set comparison runner are also not complete. These limitations must be resolved or explicitly accepted before marking the full Task 05 acceptance list complete. Task 06 real-footage work was not started.
+Face detections are not identity tracking; animation may not yield face detections; saliency may center motion without understanding its narrative importance. There is no OCR or calibrated semantic crop model. The local vision and editorial models were not run. Golden-set evaluation is tooling only until humans annotate and review footage. Task 05 stays partial pending authorized single-episode visual acceptance; Task 06 work was not started.
