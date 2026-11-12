@@ -32,3 +32,7 @@ Moment ranking is a local heuristic, not semantic understanding: it can score ac
 ## Developer checks
 
 Run python diagnostics.py to check FFmpeg/FFprobe, NVIDIA hardware, CUDA support, and usable encoders. Run python -m unittest discover -s tests -v for the synthetic rendering integration suite. NVENC tests skip if the runtime encoder probe fails.
+
+Whisper loads only after **Start Automatic Clipping** and is reused across videos in one batch. Automatic mode prefers CUDA `int8_float16` when the installed CTranslate2 runtime reports support, with CPU int8 fallback; CUDA OOM during inference retries once on CPU. Transcription cache entries are keyed to the source file and transcription settings and are replaced only after a complete successful transcription.
+
+Run `python benchmark_models.py` to record hardware information and initialize supported modes using models already present in the Hugging Face cache. This benchmark never downloads weights or searches for audio. Transcription timings run only when an explicit sample is supplied with `--audio-sample <path>`; the report says `NOT RUN` otherwise. The RTX 3050 float16 smoke test is skipped unless at least 2048 MiB of VRAM is free.

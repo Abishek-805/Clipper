@@ -71,7 +71,7 @@ class ClipperTests(unittest.TestCase):
                 self.assertEqual("unavailable", transcribe(video, True, "small", cache, threading.Event()).status)
 
             class FakeModel:
-                def __init__(self, size, device, compute_type):
+                def __init__(self, size, device, compute_type, **_kwargs):
                     self.device, self.precision = device, compute_type
                     if device == "cuda" and compute_type == "int8_float16":
                         raise RuntimeError("mock CUDA failure")
@@ -86,10 +86,11 @@ class ClipperTests(unittest.TestCase):
             whisper.WhisperModel = FakeModel
             ctranslate = types.ModuleType("ctranslate2")
             ctranslate.get_cuda_device_count = lambda: 1
+            ctranslate.get_supported_compute_types = lambda device: {"int8"} if device == "cpu" else {"int8_float16"}
             with patch.dict(sys.modules, {"faster_whisper": whisper, "ctranslate2": ctranslate}):
                 result = transcribe(video, True, "small", cache, threading.Event())
             self.assertEqual(("transcribed", "cpu", "int8"), (result.status, result.device, result.precision))
-            self.assertIn("retrying CPU int8", result.message)
+            self.assertIn("initialization failed", result.message)
 
     def test_scene_detection_failure_is_reported(self):
         with patch.dict(sys.modules, {"scenedetect": None}):

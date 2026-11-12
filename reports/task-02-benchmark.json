@@ -1,0 +1,64 @@
+{
+  "created_utc": "2026-11-12T09:28:24.826542+00:00",
+  "model": "small",
+  "model_identity": "Systran/faster-whisper-small@faster-whisper-1.2.1",
+  "model_cached": false,
+  "model_cache_path": null,
+  "hardware": {
+    "cuda_available": true,
+    "cuda_devices": 1,
+    "cuda_compute_types": [
+      "bfloat16",
+      "float16",
+      "float32",
+      "int8",
+      "int8_bfloat16",
+      "int8_float16",
+      "int8_float32"
+    ],
+    "cpu_compute_types": [
+      "float32",
+      "int16",
+      "int8",
+      "int8_float32"
+    ],
+    "gpu": {
+      "index": 0,
+      "name": "NVIDIA GeForce RTX 3050 A Laptop GPU",
+      "total_mib": 4094,
+      "free_mib": 2476,
+      "used_mib": 1417
+    },
+    "ctranslate2_version": "4.9.0"
+  },
+  "speech_sample": null,
+  "transcription_benchmark": "NOT RUN",
+  "settings": {
+    "beam_size": 5,
+    "word_timestamps": true,
+    "vad_filter": true,
+    "batch_size": 1,
+    "language": "auto"
+  },
+  "modes": [
+    {
+      "mode": "cuda-int8_float16",
+      "status": "SKIPPED",
+      "audio_seconds": null,
+      "reason": "Model is not in the local Hugging Face cache; benchmark does not download models"
+    },
+    {
+      "mode": "cuda-float16",
+      "status": "SKIPPED",
+      "audio_seconds": null,
+      "reason": "Model is not in the local Hugging Face cache; benchmark does not download models"
+    },
+    {
+      "mode": "cpu-int8",
+      "status": "SKIPPED",
+      "audio_seconds": null,
+      "reason": "Model is not in the local Hugging Face cache; benchmark does not download models"
+    }
+  ],
+  "benchmark_runtime_seconds": 0.887
+}

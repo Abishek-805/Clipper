@@ -12,6 +12,7 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Callable
 from diagnostics import ffmpeg_path, ffprobe_path, verify_encoder
+from model_manager import ModelManager
 
 VIDEO_EXTENSIONS = {".mp4", ".mkv", ".mov", ".avi", ".webm", ".m4v"}
 
@@ -41,6 +42,29 @@ class TranscriptionResult:
     device: str
     precision: str
     message: str = ""
+    outcome: str = "SUCCESS"
+    model: str = ""
+    initialization_seconds: float | None = None
+    transcription_seconds: float | None = None
+    audio_seconds: float | None = None
+    real_time_factor: float | None = None
+    vram_before: dict | None = None
+    vram_after: dict | None = None
+    peak_vram: dict | None = None
+
+
+_DEFAULT_MODEL_MANAGER: ModelManager | None = None
+_DEFAULT_MANAGER_LOCK = threading.Lock()
+
+
+def _default_model_manager(model_size: str) -> ModelManager:
+    global _DEFAULT_MODEL_MANAGER
+    with _DEFAULT_MANAGER_LOCK:
+        if _DEFAULT_MODEL_MANAGER is None or _DEFAULT_MODEL_MANAGER.model_size != model_size:
+            if _DEFAULT_MODEL_MANAGER is not None:
+                _DEFAULT_MODEL_MANAGER.release_whisper()
+            _DEFAULT_MODEL_MANAGER = ModelManager(model_size)
+        return _DEFAULT_MODEL_MANAGER
 
 
 def scan_videos(folder: Path, exclude: Path | None = None) -> list[Path]:
@@ -175,58 +199,78 @@ def _scene_cuts(path: Path) -> tuple[list[float], str]:
 
 
 def transcribe(path: Path, has_audio: bool, model_size: str, cache: Path, cancel: threading.Event,
-               progress: Callable[[str], None] | None = None) -> TranscriptionResult:
+               progress: Callable[[str], None] | None = None, model_manager: ModelManager | None = None,
+               audio_seconds: float | None = None, language: str | None = None) -> TranscriptionResult:
     if not has_audio:
-        return TranscriptionResult(None, [], "no_audio_track", "none", "none")
+        return TranscriptionResult(None, [], "no_audio_track", "none", "none", outcome="NO_AUDIO", model=model_size)
+    manager = model_manager or _default_model_manager(model_size)
+    settings = {"model": manager.model_identity(model_size), "language": language, "beam_size": 5,
+                "word_timestamps": True, "vad_filter": True}
+    stat = path.stat()
+    fingerprint_data = {"source_path": str(path.resolve()), "source_size": stat.st_size,
+                        "source_mtime_ns": stat.st_mtime_ns, "settings": settings}
+    fingerprint = hashlib.sha256(json.dumps(fingerprint_data, sort_keys=True).encode("utf-8")).hexdigest()
     if cache.exists():
         try:
             data = json.loads(cache.read_text(encoding="utf-8"))
-            stat = path.stat()
-            if data.get("source_size") == stat.st_size and data.get("source_mtime_ns") == stat.st_mtime_ns:
+            if data.get("schema") == 2 and data.get("fingerprint") == fingerprint:
                 words = [Word(**w) for w in data.get("words", [])]
                 status = "transcribed" if words else "no_speech"
-                return TranscriptionResult(data.get("language"), words, status, "cache", "cache")
+                return TranscriptionResult(
+                    data.get("language"), words, status, data.get("device", "cache"), data.get("precision", "cache"),
+                    "transcription cache hit", data.get("outcome", "SUCCESS"), settings["model"],
+                    data.get("initialization_seconds"), data.get("transcription_seconds"), data.get("audio_seconds"),
+                    data.get("real_time_factor"), data.get("vram_before"), data.get("vram_after"), data.get("peak_vram"),
+                )
         except (OSError, ValueError, TypeError, KeyError):
             pass
     try:
-        from faster_whisper import WhisperModel
-    except ImportError as exc:
-        return TranscriptionResult(None, [], "unavailable", "none", "none", str(exc))
-    try:
-        import ctranslate2
-        cuda = ctranslate2.get_cuda_device_count() > 0
-    except Exception:
-        cuda = False
-    device, precision = ("cuda", "int8_float16") if cuda else ("cpu", "int8")
-    fallback_message = ""
-    try:
-        try:
-            model = WhisperModel(model_size, device=device, compute_type=precision)
-        except Exception as exc:
-            if not cuda:
-                raise
-            fallback_message = f"CUDA {precision} unavailable ({type(exc).__name__}: {exc}); retrying CPU int8"
-            if progress:
-                progress(fallback_message)
-            model = WhisperModel(model_size, device="cpu", compute_type="int8")
-            device, precision = "cpu", "int8"
-        segments, info = model.transcribe(str(path), word_timestamps=True, vad_filter=True)
+        segments, info, transcription_seconds, peak_vram = manager.transcribe(
+            str(path), cancelled=cancel.is_set, language=language, beam_size=5,
+            word_timestamps=True, vad_filter=True,
+        )
         words = []
         for segment in segments:
-            if cancel.is_set():
-                raise InterruptedError("Processing cancelled")
             for word in segment.words or []:
                 if word.start is not None and word.end is not None:
                     words.append(Word(float(word.start), float(word.end), word.word))
-    except InterruptedError:
-        raise
+    except InterruptedError as exc:
+        state = manager.get_status()
+        return TranscriptionResult(None, [], "cancelled", state["device"], state["compute_type"], str(exc),
+                                   "CANCELLED", settings["model"])
+    except ImportError as exc:
+        return TranscriptionResult(None, [], "unavailable", "none", "none", str(exc),
+                                   "DEPENDENCY_UNAVAILABLE", settings["model"])
     except Exception as exc:
-        return TranscriptionResult(None, [], "failed", device, precision, f"{type(exc).__name__}: {exc}")
+        state = manager.get_status()
+        return TranscriptionResult(None, [], "failed", state["device"], state["compute_type"],
+                                   f"{type(exc).__name__}: {exc}", "TRANSCRIPTION_FAILED", settings["model"])
     cache.parent.mkdir(parents=True, exist_ok=True)
-    stat = path.stat()
     status = "transcribed" if words else "no_speech"
-    cache.write_text(json.dumps({"language": info.language, "source_size": stat.st_size, "source_mtime_ns": stat.st_mtime_ns, "device": device, "precision": precision, "words": [asdict(w) for w in words]}, ensure_ascii=False), encoding="utf-8")
-    return TranscriptionResult(info.language, words, status, device, precision, fallback_message)
+    manager_status = manager.get_status()
+    outcome = "NO_SPEECH" if not words else "CPU_FALLBACK" if manager_status["device"] == "cpu" else "SUCCESS"
+    if manager_status.get("fallback_reason"):
+        if progress:
+            progress(manager_status["fallback_reason"])
+    elapsed_audio = audio_seconds if audio_seconds and audio_seconds > 0 else None
+    result = TranscriptionResult(
+        info.language, words, status, manager_status["device"], manager_status["compute_type"],
+        manager_status.get("fallback_reason", ""), outcome, settings["model"], manager_status.get("init_seconds"),
+        round(transcription_seconds, 3), elapsed_audio,
+        round(transcription_seconds / elapsed_audio, 4) if elapsed_audio else None,
+        manager_status.get("vram_before"), manager.get_memory_usage(), peak_vram,
+    )
+    cache_data = {"schema": 2, "fingerprint": fingerprint, "settings": settings, "language": info.language,
+                  "device": result.device, "precision": result.precision, "outcome": result.outcome,
+                  "initialization_seconds": result.initialization_seconds,
+                  "transcription_seconds": result.transcription_seconds, "audio_seconds": result.audio_seconds,
+                  "real_time_factor": result.real_time_factor, "vram_before": result.vram_before,
+                  "vram_after": result.vram_after, "peak_vram": result.peak_vram,
+                  "words": [asdict(w) for w in words]}
+    temporary = cache.with_suffix(cache.suffix + ".tmp")
+    temporary.write_text(json.dumps(cache_data, ensure_ascii=False), encoding="utf-8")
+    temporary.replace(cache)
+    return result
 
 
 def _normalize(values: list[float]) -> list[float]:
@@ -459,7 +503,8 @@ def render(path: Path, output: Path, info: VideoInfo, clip: dict, words: list[Wo
 
 
 def process_video(path: Path, output_root: Path, model_size: str, clip_count: int, min_length: int, max_length: int,
-                  cancel: threading.Event, progress: Callable[[str], None], encoder: str = "auto") -> int:
+                  cancel: threading.Event, progress: Callable[[str], None], encoder: str = "auto",
+                  model_manager: ModelManager | None = None) -> int:
     info = probe(path)
     suffix = hashlib.sha1(str(path.resolve()).casefold().encode()).hexdigest()[:8]
     folder = output_root / f"{re.sub(r'[^A-Za-z0-9._-]+', '_', path.stem)}_{suffix}"
@@ -487,7 +532,9 @@ def process_video(path: Path, output_root: Path, model_size: str, clip_count: in
     cuts, scene_status = _scene_cuts(path)
     progress(f"Scene detection: {scene_status}")
     progress(f"Transcribing {path.name}" if info.has_audio else f"No audio track in {path.name}")
-    transcript = transcribe(path, info.has_audio, model_size, cache, cancel, progress)
+    transcript = transcribe(path, info.has_audio, model_size, cache, cancel, progress, model_manager, info.duration)
+    if transcript.outcome == "CANCELLED":
+        raise InterruptedError(transcript.message or "Processing cancelled")
     words = transcript.words
     if transcript.status == "failed":
         progress(f"Transcription failed ({transcript.device}/{transcript.precision}): {transcript.message}")
@@ -505,6 +552,6 @@ def process_video(path: Path, output_root: Path, model_size: str, clip_count: in
         render_info = render(path, folder / filename, info, clip, words, info.has_audio, cancel, encoder)
         progress(f"Encoded with {render_info['encoder']} · {render_info['encoder_note']}")
         report_clips.append({"filename": filename, **clip, "duration": round(clip["end"] - clip["start"], 3), "category": "mixed activity", "status": "completed", "render": render_info})
-    manifest = {"source": path.name, "source_path": str(path), "source_size": source_stat.st_size, "source_mtime_ns": source_stat.st_mtime_ns, "settings": settings, "source_duration": info.duration, "metadata": asdict(info), "language": transcript.language, "output_resolution": "1080x1920", "clips": report_clips, "scene_cuts": cuts, "scene_detection_status": scene_status, "transcription_words": len(words), "transcription_available": bool(words), "transcription_status": transcript.status, "transcription_device": transcript.device, "transcription_precision": transcript.precision, "transcription_message": transcript.message}
+    manifest = {"source": path.name, "source_path": str(path), "source_size": source_stat.st_size, "source_mtime_ns": source_stat.st_mtime_ns, "settings": settings, "source_duration": info.duration, "metadata": asdict(info), "language": transcript.language, "output_resolution": "1080x1920", "clips": report_clips, "scene_cuts": cuts, "scene_detection_status": scene_status, "transcription_words": len(words), "transcription_available": bool(words), "transcription_status": transcript.status, "transcription_outcome": transcript.outcome, "transcription_model": transcript.model, "transcription_device": transcript.device, "transcription_precision": transcript.precision, "transcription_message": transcript.message, "transcription_initialization_seconds": transcript.initialization_seconds, "transcription_seconds": transcript.transcription_seconds, "transcription_audio_seconds": transcript.audio_seconds, "transcription_rtf": transcript.real_time_factor, "transcription_vram_before": transcript.vram_before, "transcription_vram_after": transcript.vram_after, "transcription_peak_vram": transcript.peak_vram}
     manifest_path.write_text(json.dumps(manifest, indent=2, ensure_ascii=False), encoding="utf-8")
     return len(report_clips)

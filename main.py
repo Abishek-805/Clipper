@@ -12,6 +12,7 @@ from tkinter import filedialog, messagebox, ttk
 
 from clipper import process_video, scan_videos
 from diagnostics import collect_diagnostics
+from model_manager import ModelManager
 
 APP_DIR = Path(__file__).resolve().parent
 OUTPUT = APP_DIR / "Shorts_Output"
@@ -53,6 +54,8 @@ class ClippingApp(tk.Tk):
         self.diagnostics = collect_diagnostics()
         self.status = tk.StringVar(value="Select a folder containing videos to begin.")
         self.detected = tk.StringVar(value="0 videos detected")
+        self.model_status = tk.StringVar(value="Whisper small · unloaded · CUDA available" if self.diagnostics.get("cuda_devices") else "Whisper small · unloaded · CPU int8 fallback")
+        self.model.trace_add("write", lambda *_: self.model_status.set(f"Whisper {self.model.get()} · unloaded · load only after Start"))
         self.queue: queue.Queue = queue.Queue()
         self.cancel_event: threading.Event | None = None
         self.running = False
@@ -112,6 +115,7 @@ class ClippingApp(tk.Tk):
         self.progress = ttk.Progressbar(root, mode="determinate", maximum=100)
         self.progress.pack(fill="x", pady=(4, 8))
         ttk.Label(root, textvariable=self.status, style="Sub.TLabel").pack(anchor="w", pady=(0, 9))
+        ttk.Label(root, textvariable=self.model_status, style="Sub.TLabel").pack(anchor="w", pady=(0, 5))
         gpu = self.diagnostics.get("gpu_name") or "NVIDIA GPU not detected"
         cuda = "CUDA transcription available" if self.diagnostics.get("cuda_devices") else "CPU transcription fallback"
         encoders = self.diagnostics.get("encoders", {})
@@ -219,24 +223,28 @@ class ClippingApp(tk.Tk):
         def progress(message: str):
             log(message)
             self.queue.put(("status", message))
-        for path in videos:
-            if self.cancel_event.is_set():
-                break
-            try:
-                n = process_video(path, OUTPUT, *settings[:4], self.cancel_event, progress, settings[4])
-                done += n
-                rows.append((path.name, n, "completed"))
-                completed.add(str(path))
-                job["completed"] = sorted(completed)
-                _write_json(INTERRUPTED_JOB, job)
-            except InterruptedError:
-                rows.append((path.name, 0, "cancelled"))
-                log(f"Cancelled · {path.name}")
-                break
-            except Exception as exc:
-                rows.append((path.name, 0, f"failed: {exc}"))
-                log(f"ERROR · {path.name}: {exc}")
-            self.queue.put(("progress", videos.index(path) + 1))
+        manager = ModelManager(settings[0], status_callback=lambda value: self.queue.put(("model_status", value)))
+        try:
+            for path in videos:
+                if self.cancel_event.is_set():
+                    break
+                try:
+                    n = process_video(path, OUTPUT, *settings[:4], self.cancel_event, progress, settings[4], manager)
+                    done += n
+                    rows.append((path.name, n, "completed"))
+                    completed.add(str(path))
+                    job["completed"] = sorted(completed)
+                    _write_json(INTERRUPTED_JOB, job)
+                except InterruptedError:
+                    rows.append((path.name, 0, "cancelled"))
+                    log(f"Cancelled · {path.name}")
+                    break
+                except Exception as exc:
+                    rows.append((path.name, 0, f"failed: {exc}"))
+                    log(f"ERROR · {path.name}: {exc}")
+                self.queue.put(("progress", videos.index(path) + 1))
+        finally:
+            manager.release_whisper()
         OUTPUT.mkdir(parents=True, exist_ok=True)
         with (OUTPUT / "processing_report.csv").open("w", newline="", encoding="utf-8-sig") as f:
             writer = csv.writer(f)
@@ -261,6 +269,12 @@ class ClippingApp(tk.Tk):
                     self.progress.configure(value=value)
                 elif kind == "status":
                     self.status.set(value)
+                elif kind == "model_status":
+                    device = f"{value.get('device')} / {value.get('compute_type')}"
+                    gpu = value.get("vram_after_load") or value.get("vram_before") or {}
+                    memory = f" · GPU memory {gpu.get('free_mib')} / {gpu.get('total_mib')} MiB free" if gpu else ""
+                    fallback = f" · {value['fallback_reason']}" if value.get("fallback_reason") else ""
+                    self.model_status.set(f"Whisper {value.get('model')} · {value.get('state')} · {device}{memory}{fallback}")
                 elif kind == "finished":
                     self.running = False
                     self.start_button.configure(state="normal")
