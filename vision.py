@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import hashlib
+import importlib.util
 import json
 import os
 import re
@@ -20,6 +21,38 @@ SCHEMA_VERSION = 1
 ALLOWED_CATEGORIES = {"ACTION_COMBAT", "COMEDY_REACTION", "EMOTIONAL", "SUSPENSE_TENSION",
                       "DIALOGUE_CONFRONTATION", "TRANSFORMATION_REVEAL", "VISUALLY_INTERESTING", "OTHER", "UNCERTAIN"}
 FRAME_FRACTIONS = (0.0, 0.2, 0.4, 0.6, 0.8, 0.96)
+REQUIRED_MODEL_FILES = ("config.json", "model.safetensors", "preprocessor_config.json", "chat_template.json",
+                        "processor_config.json", "tokenizer.json", "tokenizer_config.json")
+
+
+def cached_model_path() -> Path:
+    try:
+        from huggingface_hub.constants import HF_HUB_CACHE
+        root = Path(HF_HUB_CACHE)
+    except ImportError:
+        root = Path(os.environ.get("HF_HUB_CACHE", Path.home() / ".cache/huggingface/hub"))
+    return root / "models--HuggingFaceTB--SmolVLM2-500M-Video-Instruct" / "snapshots" / MODEL_REVISION
+
+
+def verify_model_snapshot(path: Path) -> bool:
+    return path.is_dir() and all((path / filename).is_file() for filename in REQUIRED_MODEL_FILES)
+
+
+def vision_installation_status() -> dict:
+    missing = [name for name, module in (("transformers", "transformers"), ("accelerate", "accelerate"),
+                                          ("Pillow", "PIL"), ("huggingface_hub", "huggingface_hub"))
+               if importlib.util.find_spec(module) is None]
+    torch_missing = importlib.util.find_spec("torch") is None
+    snapshot = cached_model_path()
+    weights_ready = verify_model_snapshot(snapshot)
+    if missing or torch_missing or not weights_ready:
+        device = "unknown"
+    else:
+        import torch
+        device = "CUDA" if torch.cuda.is_available() else "CPU fallback"
+    return {"missing_dependencies": missing, "torch_missing": torch_missing,
+            "weights_verified": weights_ready, "snapshot": str(snapshot), "device": device,
+            "ready": not missing and not torch_missing and weights_ready}
 
 
 def semantic_cache_key(source: Path, candidate: dict, transcript: str, language: str | None,
@@ -107,6 +140,21 @@ def parse_semantic_response(text: str, frame_timestamps: list[float]) -> dict:
             "evidence": [round(float(value), 3) for value in evidence], "calibration": "uncalibrated_model_score"}
 
 
+def build_vision_messages(frames: list[dict], transcript: str = "", language: str | None = None,
+                          retry: bool = False) -> list[dict]:
+    content = []
+    for frame in frames:
+        content.extend(([{"type": "text", "text": f"Frame at {frame['timestamp']:.3f} seconds."},
+                         {"type": "image", "path": str(frame["path"])}]))
+    prompt = (f"Transcript (English only, may be imperfect): {transcript[:1800]}\n" if language == "en" else "")
+    prompt += ('Return only JSON: {"category":"...","score":0.0,"reason":"...","evidence":[timestamps]}. '
+               "Describe visible action/mood; use UNCERTAIN when unclear. Scores are 0 to 1.")
+    if retry:
+        prompt += " Your previous response was invalid; return a valid object using only supplied frame timestamps."
+    content.append({"type": "text", "text": prompt})
+    return [{"role": "user", "content": content}]
+
+
 class VisionModelManager:
     MIN_FREE_MIB = 2200
 
@@ -124,18 +172,24 @@ class VisionModelManager:
             self.status_callback(dict(self._status))
 
     def status(self):
-        cached = Path(os.environ.get("HF_HUB_CACHE", Path.home() / ".cache/huggingface/hub")) / "models--HuggingFaceTB--SmolVLM2-500M-Video-Instruct"
-        return {**self._status, "loaded": self.model is not None, "cached": cached.is_dir(), "gpu": gpu_memory_usage()}
+        return {**self._status, "loaded": self.model is not None,
+                "cached": verify_model_snapshot(cached_model_path()), "gpu": gpu_memory_usage()}
 
     def _model_path(self) -> Path:
         from huggingface_hub import snapshot_download
         patterns = ["*.json", "*.model", "*.txt", "*.safetensors", "*.py", "*.tiktoken"]
         try:
-            return Path(snapshot_download(MODEL_ID, revision=MODEL_REVISION, local_files_only=True, allow_patterns=patterns))
+            path = Path(snapshot_download(MODEL_ID, revision=MODEL_REVISION, local_files_only=True, allow_patterns=patterns))
+            if not verify_model_snapshot(path):
+                raise FileNotFoundError(f"Pinned model snapshot is incomplete: {path}")
+            return path
         except Exception as exc:
             if not self.allow_download:
                 raise FileNotFoundError("SmolVLM2 weights are not cached. Use the explicit --allow-model-download setup action.") from exc
-            return Path(snapshot_download(MODEL_ID, revision=MODEL_REVISION, local_files_only=False, allow_patterns=patterns))
+            path = Path(snapshot_download(MODEL_ID, revision=MODEL_REVISION, local_files_only=False, allow_patterns=patterns))
+            if not verify_model_snapshot(path):
+                raise FileNotFoundError(f"Downloaded pinned model snapshot is incomplete: {path}")
+            return path
 
     def initialize(self):
         if self.model is not None:
@@ -156,7 +210,8 @@ class VisionModelManager:
                     model_path, torch_dtype=dtype, attn_implementation="sdpa", local_files_only=True)
                 self.model.to(device).eval()
             self.device = device
-            self._notify(state="loaded", device=device, vram_after_load=gpu_memory_usage())
+            precision = str(getattr(self.model, "dtype", "float16" if device == "cuda" else "float32"))
+            self._notify(state="loaded", device=device, precision=precision, vram_after_load=gpu_memory_usage())
             return self.status()
         except Exception as exc:
             self.release()
@@ -172,7 +227,7 @@ class VisionModelManager:
                     self.model = AutoModelForImageTextToText.from_pretrained(model_path, torch_dtype=torch.float32,
                                                                              attn_implementation="sdpa", local_files_only=True).to("cpu").eval()
                 self.device = "cpu"
-                self._notify(state="loaded", device="cpu", fallback_reason=str(exc))
+                self._notify(state="loaded", device="cpu", precision="float32", fallback_reason=str(exc))
                 return self.status()
             self._notify(state="unavailable", reason=f"{type(exc).__name__}: {exc}")
             raise
@@ -194,7 +249,7 @@ class VisionModelManager:
                 self.model = AutoModelForImageTextToText.from_pretrained(model_path, torch_dtype=torch.float32,
                                                                          attn_implementation="sdpa", local_files_only=True).to("cpu").eval()
             self.device = "cpu"
-            self._notify(state="loaded", device="cpu", fallback_reason=f"CUDA inference ran out of memory: {exc}")
+            self._notify(state="loaded", device="cpu", precision="float32", fallback_reason=f"CUDA inference ran out of memory: {exc}")
             return self._analyze(frames, transcript, language)
 
     def _analyze(self, frames: list[dict], transcript: str = "", language: str | None = None) -> dict:
@@ -204,15 +259,10 @@ class VisionModelManager:
                 response = self.model(frames, transcript, language)
             else:
                 import torch
-                messages = [{"role": "user", "content": sum(([{"type": "text", "text": f"Frame at {frame['timestamp']:.3f} seconds."},
-                                                                      {"type": "image", "path": str(frame["path"])}] for frame in frames), []) +
-                            [{"type": "text", "text": (f"Transcript (English only, may be imperfect): {transcript[:1800]}\n" if language == "en" else "") +
-                             'Return only JSON: {"category":"...","score":0.0,"reason":"...","evidence":[timestamps]}. '
-                             "Describe visible action/mood; use UNCERTAIN when unclear. Scores are 0 to 1." +
-                             (" Your previous response was invalid; return a valid object using only supplied frame timestamps." if attempt else "")}]}]
+                messages = build_vision_messages(frames, transcript, language, retry=bool(attempt))
                 inputs = self.processor.apply_chat_template(messages, add_generation_prompt=True, tokenize=True,
                                                             return_dict=True, return_tensors="pt")
-                inputs = {key: value.to(self.device) if hasattr(value, "to") else value for key, value in inputs.items()}
+                inputs = prepare_model_inputs(inputs, self.model)
                 with torch.inference_mode():
                     generated = self.model.generate(**inputs, max_new_tokens=128, do_sample=False)
                 response = self.processor.batch_decode(generated[:, inputs["input_ids"].shape[-1]:], skip_special_tokens=True)[0]
@@ -235,4 +285,29 @@ class VisionModelManager:
             pass
         self.device = "unloaded"
         self._notify(state="unloaded", vram_after_release=gpu_memory_usage())
+
+
+def prepare_model_inputs(inputs, model) -> dict:
+    """Move processor tensors without changing integer token or mask dtypes."""
+    if not hasattr(inputs, "items") or not hasattr(model, "device"):
+        raise TypeError("Processor must return a mapping and model must expose its device")
+    prepared = {}
+    for key in ("input_ids", "attention_mask", "pixel_attention_mask"):
+        value = inputs.get(key)
+        if value is not None and (not hasattr(value, "to") or value.is_floating_point()):
+            raise TypeError(f"Processor {key} must be an integer or boolean tensor")
+    pixels = inputs.get("pixel_values")
+    if pixels is None or not hasattr(pixels, "to") or not pixels.is_floating_point():
+        raise TypeError("Processor pixel_values must be a floating-point tensor")
+    for key, value in inputs.items():
+        if not hasattr(value, "to"):
+            prepared[key] = value
+        elif key == "pixel_values" and value.is_floating_point():
+            prepared[key] = value.to(device=model.device, dtype=model.dtype)
+        else:
+            prepared[key] = value.to(device=model.device)
+    for required in ("input_ids", "attention_mask", "pixel_values"):
+        if required not in prepared:
+            raise ValueError(f"Processor output is missing {required}")
+    return prepared
 

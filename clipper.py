@@ -605,11 +605,22 @@ def deduplicate_candidates(candidates: list[dict], iou_threshold: float = 0.35,
     return kept, rejected
 
 
+SEMANTIC_CATEGORY_DIVERSITY_WEIGHT = 0.05
+
+
 def select_diverse_candidates(candidates: list[dict], count: int, duration: float,
                               minimum_distance: float = 5.0, minimum_score: float = 0.075,
-                              cancel: threading.Event | None = None) -> tuple[list[dict], list[dict]]:
+                              cancel: threading.Event | None = None,
+                              category_weight: float = SEMANTIC_CATEGORY_DIVERSITY_WEIGHT) -> tuple[list[dict], list[dict]]:
+    if not math.isfinite(category_weight) or category_weight < 0:
+        raise ValueError("category_weight must be a finite nonnegative value")
     selected, rejected = [], []
     remaining = [c for c in candidates if c.get("boundary_valid", True) and c["score"] >= minimum_score]
+    categories = {c.get("semantic_category") for c in remaining
+                  if c.get("semantic_category") not in (None, "UNCERTAIN")}
+    use_category_diversity = len(categories) > 1 and category_weight > 0
+    for candidate in candidates:
+        candidate.pop("selection_diversity", None)
     rejected.extend({"start": c["start"], "end": c["end"], "reason": "invalid refined boundary"}
                     for c in candidates if not c.get("boundary_valid", True))
     rejected.extend({"start": c["start"], "end": c["end"], "reason": "below minimum quality score", "score": c["score"]}
@@ -620,19 +631,28 @@ def select_diverse_candidates(candidates: list[dict], count: int, duration: floa
         def diversity_score(item):
             center = (item["start"] + item["end"]) / 2
             distance = min((abs(center - (clip["start"] + clip["end"]) / 2) for clip in selected), default=duration)
+            temporal = 0.7 + 0.3 * min(1.0, distance / max(1.0, duration / 4))
             category = item.get("semantic_category")
-            category_bonus = 0.05 if category and all(clip.get("semantic_category") != category for clip in selected) else 0.0
-            return item["score"] * (0.7 + 0.3 * min(1.0, distance / max(1.0, duration / 4))) + category_bonus
+            category_bonus = category_weight if use_category_diversity and category not in (None, "UNCERTAIN") and all(
+                clip.get("semantic_category") != category for clip in selected) else 0.0
+            item["_selection_diversity"] = {"temporal_factor": round(temporal, 4),
+                                            "category_bonus": round(category_bonus, 4),
+                                            "category_weight": category_weight if use_category_diversity else 0.0}
+            return item["score"] * temporal + category_bonus
         remaining.sort(key=diversity_score, reverse=True)
         candidate = remaining.pop(0)
         conflict = next((prior for prior in selected if _interval_iou(candidate, prior) > 0.35 or
                          (candidate["start"] >= prior["end"] and candidate["start"] - prior["end"] < minimum_distance) or
                          (prior["start"] >= candidate["end"] and prior["start"] - candidate["end"] < minimum_distance)), None)
         if conflict:
+            candidate.pop("_selection_diversity", None)
             rejected.append({"start": candidate["start"], "end": candidate["end"], "reason": "duplicate or too close",
                              "duplicate_of": [conflict["start"], conflict["end"]]})
         else:
+            candidate["selection_diversity"] = candidate.pop("_selection_diversity")
             selected.append(candidate)
+        for item in remaining:
+            item.pop("_selection_diversity", None)
     for candidate in remaining:
         rejected.append({"start": candidate["start"], "end": candidate["end"], "reason": "clip count reached"})
     for candidate in selected:
@@ -945,7 +965,9 @@ def process_video(path: Path, output_root: Path, model_size: str, clip_count: in
         semantic_cache = read_semantic_cache(semantic_cache_path)
         ranked = [candidate for candidate in selection["candidates"] if candidate.get("boundary_valid", True) and candidate.get("score", 0) >= 0.075]
         ranked = sorted(ranked, key=lambda item: item["score"], reverse=True)[:min(12, max(8, clip_count * 2))]
-        semantic_summary.update(status="heuristic_fallback", model="HuggingFaceTB/SmolVLM2-500M-Video-Instruct")
+        semantic_summary.update(status="heuristic_fallback", model="HuggingFaceTB/SmolVLM2-500M-Video-Instruct",
+                                category_diversity_weight=SEMANTIC_CATEGORY_DIVERSITY_WEIGHT,
+                                model_lifecycle="Whisper released before vision; vision released after this source; Whisper reloads for the next source")
         try:
             # Never keep the Whisper model resident while loading a vision model on the same GPU.
             (model_manager or _default_model_manager(model_size)).release_whisper()
@@ -979,11 +1001,13 @@ def process_video(path: Path, output_root: Path, model_size: str, clip_count: in
                 progress(f"Semantic result · {result['category']} · model {result['score']:.2f} · combined {candidate['score']:.2f}")
             if semantic_summary["analyzed"]:
                 unique, _ = deduplicate_candidates(selection["candidates"])
-                semantic_selected, _ = select_diverse_candidates(unique, clip_count, info.duration)
+                semantic_selected, _ = select_diverse_candidates(
+                    unique, clip_count, info.duration, category_weight=SEMANTIC_CATEGORY_DIVERSITY_WEIGHT)
                 for candidate in selection["candidates"]:
                     candidate["selected"] = candidate in semantic_selected
                 selection["selected"] = semantic_selected
                 selection["selected_count"] = len(semantic_selected)
+                selection["category_diversity_weight"] = SEMANTIC_CATEGORY_DIVERSITY_WEIGHT
                 semantic_summary["status"] = "completed"
         except InterruptedError:
             raise
@@ -1011,6 +1035,7 @@ def process_video(path: Path, output_root: Path, model_size: str, clip_count: in
         report_clips.append({"filename": filename, **clip, "duration": round(clip["end"] - clip["start"], 3), "category": clip.get("semantic_category", "mixed activity"), "status": "completed", "render": render_info})
     candidate_report = {"candidate_count": selection["candidate_count"], "rejected_count": selection["rejected_count"],
                         "selected_count": len(clips), "short_source_policy": selection["short_source_policy"],
+                        "category_diversity_weight": selection.get("category_diversity_weight", 0),
                         "activity_regions": selection["activity_regions"], "speech_regions": selection["speech_regions"],
                         "candidates": selection["candidates"], "rejections": selection["rejections"]}
     manifest = {"source": path.name, "source_path": str(path), "source_size": source_stat.st_size, "source_mtime_ns": source_stat.st_mtime_ns, "settings": settings, "source_duration": info.duration, "metadata": asdict(info), "language": transcript.language, "output_resolution": "1080x1920", "clips": report_clips, "candidate_selection": candidate_report, "semantic_analysis": semantic_summary, "analysis_cache_status": analysis_cache_status, "scene_cuts": cuts, "scene_detection_status": scene_status, "transcription_words": len(words), "transcription_available": bool(words), "transcription_status": transcript.status, "transcription_outcome": transcript.outcome, "transcription_model": transcript.model, "transcription_device": transcript.device, "transcription_precision": transcript.precision, "transcription_message": transcript.message, "transcription_initialization_seconds": transcript.initialization_seconds, "transcription_seconds": transcript.transcription_seconds, "transcription_audio_seconds": transcript.audio_seconds, "transcription_rtf": transcript.real_time_factor, "transcription_vram_before": transcript.vram_before, "transcription_vram_after": transcript.vram_after, "transcription_peak_vram": transcript.peak_vram}

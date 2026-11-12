@@ -14,7 +14,7 @@ from tkinter import filedialog, messagebox, ttk
 from clipper import process_video, scan_videos
 from diagnostics import collect_diagnostics
 from model_manager import ModelManager
-from vision import VisionModelManager
+from vision import VisionModelManager, vision_installation_status
 
 APP_DIR = Path(__file__).resolve().parent
 OUTPUT = APP_DIR / "Shorts_Output"
@@ -58,6 +58,7 @@ class ClippingApp(tk.Tk):
         self.status = tk.StringVar(value="Select a folder containing videos to begin.")
         self.detected = tk.StringVar(value="0 videos detected")
         self.model_status = tk.StringVar(value="Whisper small · unloaded · CUDA available" if self.diagnostics.get("cuda_devices") else "Whisper small · unloaded · CPU int8 fallback")
+        self.vision_status = tk.StringVar(value=self._vision_setup_text(vision_installation_status()))
         self.model.trace_add("write", lambda *_: self.model_status.set(f"Whisper {self.model.get()} · unloaded · load only after Start"))
         self.queue: queue.Queue = queue.Queue()
         self.cancel_event: threading.Event | None = None
@@ -121,6 +122,7 @@ class ClippingApp(tk.Tk):
         self.progress.pack(fill="x", pady=(4, 8))
         ttk.Label(root, textvariable=self.status, style="Sub.TLabel").pack(anchor="w", pady=(0, 9))
         ttk.Label(root, textvariable=self.model_status, style="Sub.TLabel").pack(anchor="w", pady=(0, 5))
+        ttk.Label(root, textvariable=self.vision_status, style="Sub.TLabel").pack(anchor="w", pady=(0, 5))
         gpu = self.diagnostics.get("gpu_name") or "NVIDIA GPU not detected"
         cuda = "CUDA transcription available" if self.diagnostics.get("cuda_devices") else "CPU transcription fallback"
         encoders = self.diagnostics.get("encoders", {})
@@ -288,7 +290,15 @@ class ClippingApp(tk.Tk):
                 elif kind == "vision_status":
                     gpu = value.get("vram") or value.get("vram_after_load") or {}
                     memory = f" · GPU memory {gpu.get('free_mib')} / {gpu.get('total_mib')} MiB free" if gpu else ""
-                    self.model_status.set(f"Vision {value.get('model')} · {value.get('state')} · {value.get('device', 'unloaded')}{memory}")
+                    precision = f" / {value.get('precision')}" if value.get("precision") else ""
+                    fallback = f" · CPU fallback: {value.get('fallback_reason')}" if value.get("fallback_reason") else ""
+                    reason = f" · {value.get('reason')}" if value.get("reason") else ""
+                    state = "model initialization failed" if value.get("reason") and value.get("state") == "unloaded" else value.get("state")
+                    self.vision_status.set(f"Vision {state} · {value.get('device', 'unloaded')}{precision}{memory}{fallback}{reason}")
+                elif kind == "vision_setup_finished":
+                    code, verified, text = value
+                    prefix = "Model downloaded and verified · " if code == 0 and verified else "Vision setup failed · "
+                    self.vision_status.set(prefix + text)
                 elif kind == "finished":
                     self.running = False
                     self.start_button.configure(state="normal")
@@ -313,19 +323,49 @@ class ClippingApp(tk.Tk):
 
     def _setup_vision(self):
         if not messagebox.askyesno("Download local vision model?",
-                                   "This downloads the pinned SmolVLM2 model files from Hugging Face. Optional Python packages and PyTorch must be installed separately. Continue?",
+                                   "This downloads and verifies the pinned SmolVLM2 model files from Hugging Face.\n\nInstall optional packages first with:\n.venv\\Scripts\\python.exe -m pip install -r requirements-vision.txt\n\nInstall PyTorch separately using the official Windows/Pip/CUDA selector at pytorch.org/get-started/locally. Python 3.14 is supported. Continue with model download?",
                                    parent=self):
             return
-        self.status.set("Downloading the explicitly selected local vision model…")
+        self.vision_status.set("Model download in progress · pinned revision")
         def download():
             try:
-                result = subprocess.run([sys.executable, str(APP_DIR / "benchmark_vision.py"), "--allow-model-download"],
-                                        cwd=APP_DIR, capture_output=True, text=True)
-                self.queue.put(("log", result.stdout or result.stderr or "Vision model setup finished."))
-                self.queue.put(("status", "Vision model setup finished." if result.returncode == 0 else "Vision model setup failed; see processing log."))
+                process = subprocess.Popen([sys.executable, str(APP_DIR / "setup_vision_model.py"), "--allow-download"],
+                                           cwd=APP_DIR, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1)
+                output = []
+                line = ""
+                while char := process.stdout.read(1):
+                    if char in "\r\n":
+                        if line:
+                            output.append(line)
+                            self.queue.put(("log", line))
+                            line = ""
+                    else:
+                        line += char
+                if line:
+                    output.append(line)
+                    self.queue.put(("log", line))
+                code = process.wait()
+                self.queue.put(("vision_setup_finished", (code,
+                    any(item.startswith("MODEL_SNAPSHOT_VERIFIED ") for item in output),
+                    self._vision_setup_text(vision_installation_status()))))
             except Exception as exc:
-                self.queue.put(("status", f"Vision model setup failed: {exc}"))
+                self.queue.put(("vision_setup_finished", (1, False, f"Model initialization failed: {exc}")))
         threading.Thread(target=download, daemon=True).start()
+
+    @staticmethod
+    def _vision_setup_text(status: dict) -> str:
+        parts = []
+        if status["missing_dependencies"]:
+            parts.append("Python dependencies missing: " + ", ".join(status["missing_dependencies"]))
+        if status["torch_missing"]:
+            parts.append("PyTorch missing · use the official Windows CUDA selector")
+        if not status["weights_verified"]:
+            parts.append("Model weights missing or unverified")
+        else:
+            parts.append("Model downloaded and verified")
+            if status["ready"]:
+                parts.append("ready for inference · " + status["device"])
+        return "Vision · " + " · ".join(parts)
 
     def _on_close(self):
         if self.running:

@@ -134,6 +134,33 @@ class CandidateSelectionTests(unittest.TestCase):
         self.assertEqual(1, len(selected))
         self.assertEqual("duplicate or too close", rejected[0]["reason"])
 
+    def test_category_diversity_is_configurable_and_recorded(self):
+        def candidate(start, end, score, category):
+            return {"start": start, "end": end, "score": score, "semantic_category": category,
+                    "feature_scores": {"average_motion": .4, "average_audio_energy": .4,
+                                       "speech_density": .2, "dialogue_completeness": .2}}
+        values = [candidate(0, 20, .9, "ACTION_COMBAT"),
+                  candidate(60, 80, .81, "ACTION_COMBAT"),
+                  candidate(30, 50, .78, "COMEDY_REACTION")]
+        selected, _ = select_diverse_candidates(values, 2, 100, category_weight=.15)
+        self.assertEqual(["ACTION_COMBAT", "COMEDY_REACTION"], [c["semantic_category"] for c in selected])
+        self.assertEqual(.15, selected[1]["selection_diversity"]["category_bonus"])
+
+    def test_single_category_and_heuristic_fallback_add_no_category_bonus(self):
+        candidates = []
+        for start in (0, 30):
+            candidates.append({"start": start, "end": start + 20, "score": .8,
+                               "semantic_category": "ACTION_COMBAT",
+                               "feature_scores": {"average_motion": .4, "average_audio_energy": .4,
+                                                  "speech_density": .2, "dialogue_completeness": .2}})
+        selected, _ = select_diverse_candidates(candidates, 2, 100)
+        self.assertTrue(all(item["selection_diversity"]["category_bonus"] == 0 for item in selected))
+        for candidate in candidates:
+            candidate.pop("semantic_category")
+        selected, _ = select_diverse_candidates(candidates, 2, 100)
+        self.assertEqual(2, len(selected))
+        self.assertTrue(all(item["selection_diversity"]["category_weight"] == 0 for item in selected))
+
     def test_insufficient_candidate_count_does_not_fill_with_weak_clips(self):
         motion = [0.0] * 100
         motion[20:40] = [9.0] * 20

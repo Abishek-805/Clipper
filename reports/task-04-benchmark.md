@@ -2,10 +2,13 @@
 
 - **model:** HuggingFaceTB/SmolVLM2-500M-Video-Instruct
 - **revision:** 7b375e1b73b11138ff12fe22c8f2822d8fe03467
-- **hardware:** {'index': 0, 'name': 'NVIDIA GeForce RTX 3050 A Laptop GPU', 'total_mib': 4094, 'free_mib': 2451, 'used_mib': 1442}
-- **dependencies:** {'torch': 'missing', 'transformers': 'missing', 'accelerate': 'missing', 'PIL': 'missing'}
-- **model_status:** NOT RUN
+- **hardware_before:** {'index': 0, 'name': 'NVIDIA GeForce RTX 3050 A Laptop GPU', 'total_mib': 4094, 'free_mib': 2545, 'used_mib': 1348}
+- **dependencies:** {'torch': False, 'transformers': False, 'accelerate': False, 'Pillow': False, 'huggingface_hub': True}
 - **video:** None
+- **sample_type:** synthetic_images
+- **model_status:** DEPENDENCIES_MISSING
 - **real_inference:** NOT RUN
 - **quality_metrics:** NOT RUN
-- **reason:** Pass --video with one explicit local video path to run inference.
+- **weights_status:** MISSING_OR_UNVERIFIED
+- **synthetic_images_generated:** 2
+- **reason:** Missing: torch, transformers, accelerate, Pillow
