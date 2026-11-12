@@ -1,4 +1,5 @@
 import json
+import os
 import tempfile
 import tkinter as tk
 import unittest
@@ -42,6 +43,34 @@ class StartupSafetyTests(unittest.TestCase):
                 finally:
                     app._close_store()
                     app.destroy()
+
+    def test_single_episode_start_uses_only_explicit_file_without_queue_scan(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source = root / "selected.mp4"
+            source.write_bytes(b"synthetic placeholder; worker is mocked")
+            app = self._app(root)
+            try:
+                app.single_file.set(str(source))
+                with patch.object(main, "PREFERENCES", root / "preferences.json"), \
+                     patch.dict(os.environ, {}, clear=False), \
+                     patch.object(main, "_whisper_model_cached", return_value=True), \
+                     patch.object(main, "scan_videos") as scan, \
+                     patch.object(main, "process_video") as processor, \
+                     patch.object(main, "NightlySessionRunner") as runner, \
+                     patch.object(main.threading, "Thread") as thread:
+                    app._start_single()
+                scan.assert_not_called()
+                processor.assert_not_called()
+                runner.assert_not_called()
+                thread.assert_called_once()
+                self.assertTrue(app.running)
+                self.assertEqual(str(source), app.single_file.get())
+                self.assertIsNone(app.runner)
+            finally:
+                app.running = False
+                app._close_store()
+                app.destroy()
 
     def test_application_source_has_no_desktop_capture_api(self):
         source = "\n".join((Path(main.__file__).parent / name).read_text(encoding="utf-8").lower()

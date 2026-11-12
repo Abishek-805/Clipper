@@ -16,11 +16,11 @@ from model_manager import gpu_memory_usage
 
 MODEL_ID = "HuggingFaceTB/SmolVLM2-500M-Video-Instruct"
 MODEL_REVISION = "7b375e1b73b11138ff12fe22c8f2822d8fe03467"
-PROMPT_VERSION = "candidate-v1"
+PROMPT_VERSION = "candidate-v2-adaptive"
 SCHEMA_VERSION = 1
 ALLOWED_CATEGORIES = {"ACTION_COMBAT", "COMEDY_REACTION", "EMOTIONAL", "SUSPENSE_TENSION",
                       "DIALOGUE_CONFRONTATION", "TRANSFORMATION_REVEAL", "VISUALLY_INTERESTING", "OTHER", "UNCERTAIN"}
-FRAME_FRACTIONS = (0.0, 0.2, 0.4, 0.6, 0.8, 0.96)
+FRAME_FRACTIONS = (0.0, 0.14, 0.28, 0.42, 0.56, 0.70, 0.84, 0.96)
 REQUIRED_MODEL_FILES = ("config.json", "model.safetensors", "preprocessor_config.json", "chat_template.json",
                         "processor_config.json", "tokenizer.json", "tokenizer_config.json")
 
@@ -81,18 +81,37 @@ def write_semantic_cache(path: Path, data: dict) -> None:
     temp.replace(path)
 
 
-def extract_candidate_frames(source: Path, start: float, end: float, cancel=None) -> tuple[list[dict], Path]:
+def sample_timestamps(start: float, end: float, key_timestamps: list[float] | None = None,
+                      max_frames: int = 12) -> list[float]:
+    if not 3 <= max_frames <= 12 or end <= start:
+        raise ValueError("Frame budget must be 3–12 and candidate duration must be positive")
+    base = [round(start + (end - start) * fraction, 3) for fraction in FRAME_FRACTIONS]
+    events = sorted({round(value, 3) for value in (key_timestamps or []) if start <= value < end})
+    chosen = {round(start, 3), round(start + (end - start) / 2, 3), round(max(start, end - .05), 3)}
+    room = max_frames - len(chosen)
+    if len(events) > room:
+        events = [events[round(i * (len(events) - 1) / max(1, room - 1))] for i in range(room)] if room else []
+    chosen.update(events)
+    base = [value for value in base if value not in chosen]
+    room = max_frames - len(chosen)
+    if len(base) > room:
+        base = [base[round(i * (len(base) - 1) / max(1, room - 1))] for i in range(room)] if room else []
+    chosen.update(base)
+    return sorted(chosen)
+
+
+def extract_candidate_frames(source: Path, start: float, end: float, cancel=None,
+                             key_timestamps: list[float] | None = None, max_frames: int = 12) -> tuple[list[dict], Path]:
     directory = Path(tempfile.mkdtemp(prefix="clipper-vision-"))
     frames = []
     try:
         ffmpeg = ffmpeg_path()
         if not ffmpeg:
             raise FileNotFoundError("FFmpeg is required for semantic frame sampling")
-        duration = end - start
-        for index, fraction in enumerate(FRAME_FRACTIONS):
+        timestamps = sample_timestamps(start, end, key_timestamps, max_frames)
+        for index, timestamp in enumerate(timestamps):
             if cancel and cancel.is_set():
                 raise InterruptedError("Processing cancelled")
-            timestamp = min(end - 0.05, start + duration * fraction)
             target = directory / f"frame_{index:02}.jpg"
             result = subprocess.run([ffmpeg, "-v", "error", "-ss", f"{timestamp:.3f}", "-i", str(source),
                                      "-frames:v", "1", "-vf", "scale='min(512,iw)':-2", "-q:v", "4", str(target)],

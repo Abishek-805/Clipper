@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import os
+import re
 import queue
 import subprocess
 import sys
@@ -10,7 +12,7 @@ import tkinter as tk
 from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 
-from clipper import scan_videos
+from clipper import process_video, scan_videos
 from diagnostics import collect_diagnostics
 from model_manager import ModelManager, gpu_memory_usage
 from vision import VisionModelManager, vision_installation_status
@@ -46,6 +48,12 @@ def _whisper_model_cached(model_size: str) -> bool:
         return False
 
 
+def _source_output_folder(source: Path) -> Path:
+    suffix = hashlib.sha1(str(source.resolve()).casefold().encode()).hexdigest()[:8]
+    stem = re.sub(r"[^A-Za-z0-9._-]+", "_", source.stem)
+    return OUTPUT / f"{stem}_{suffix}"
+
+
 class ClippingApp(tk.Tk):
     def __init__(self):
         super().__init__()
@@ -66,6 +74,15 @@ class ClippingApp(tk.Tk):
         self.target = tk.IntVar(value=5)
         self.max_hours = tk.IntVar(value=6)
         self.batch_size = tk.IntVar(value=2)
+        self.single_file = tk.StringVar(value="")
+        self.latest_output: Path | None = None
+        self.caption_style = tk.StringVar(value=preferences.get("caption_style", "bold_pop"))
+        self.caption_placement = tk.StringVar(value=preferences.get("caption_placement", "lower"))
+        self.editorial_endpoint = tk.StringVar(value=preferences.get("editorial_endpoint", os.getenv("CLIPPER_LOCAL_LLM_ENDPOINT", "")))
+        self.editorial_model = tk.StringVar(value=preferences.get("editorial_model", os.getenv("CLIPPER_LOCAL_LLM_MODEL", "")))
+        self.editorial_status = tk.StringVar(value=self._editorial_status_text())
+        self.editorial_endpoint.trace_add("write", lambda *_: self.editorial_status.set(self._editorial_status_text()))
+        self.editorial_model.trace_add("write", lambda *_: self.editorial_status.set(self._editorial_status_text()))
         self.diagnostics = collect_diagnostics()
         self.gpu_memory = gpu_memory_usage()
         self.status = tk.StringVar(value="Select a folder containing videos to begin.")
@@ -109,6 +126,10 @@ class ClippingApp(tk.Tk):
         self.select_button.pack(side="left")
         ttk.Label(row, textvariable=self.detected, style="Sub.TLabel").pack(side="right", padx=4)
         ttk.Label(root, textvariable=self.folder, style="Sub.TLabel").pack(anchor="w", fill="x", pady=(9, 12))
+        single_row = ttk.Frame(root)
+        single_row.pack(fill="x", pady=(0, 12))
+        ttk.Button(single_row, text="Choose One Episode…", command=self._choose_single).pack(side="left")
+        ttk.Label(single_row, textvariable=self.single_file, style="Sub.TLabel").pack(side="left", padx=10, fill="x", expand=True)
         advanced = ttk.LabelFrame(root, text=" Output defaults ", padding=(12, 7))
         advanced.pack(fill="x", pady=(0, 16))
         for label, var, width in [("Clips per video", self.count, 5), ("Min seconds", self.minimum, 5), ("Max seconds", self.maximum, 5)]:
@@ -125,6 +146,16 @@ class ClippingApp(tk.Tk):
         ttk.Label(encoder_frame, text="Video encoder", style="Sub.TLabel").pack(anchor="w")
         ttk.Combobox(encoder_frame, textvariable=self.encoder, values=("auto", "libx264", "h264_nvenc"), width=11, state="readonly").pack(anchor="w", pady=(4, 0))
         ttk.Checkbutton(advanced, text="Enable optional local semantic scene analysis", variable=self.semantic).pack(side="left", padx=10, pady=(14, 0))
+        captions = ttk.LabelFrame(root, text=" Captions and optional local narrative model ", padding=(12, 7))
+        captions.pack(fill="x", pady=(0, 10))
+        ttk.Label(captions, text="Style", style="Sub.TLabel").pack(side="left")
+        ttk.Combobox(captions, textvariable=self.caption_style, values=("bold_pop", "karaoke", "cinematic_minimal", "boxed"), width=18, state="readonly").pack(side="left", padx=(5, 12))
+        ttk.Label(captions, text="Placement", style="Sub.TLabel").pack(side="left")
+        ttk.Combobox(captions, textvariable=self.caption_placement, values=("lower", "middle", "upper"), width=11, state="readonly").pack(side="left", padx=(5, 12))
+        ttk.Label(captions, text="Local endpoint/model", style="Sub.TLabel").pack(side="left")
+        ttk.Entry(captions, textvariable=self.editorial_endpoint, width=24).pack(side="left", padx=(5, 4))
+        ttk.Entry(captions, textvariable=self.editorial_model, width=12).pack(side="left")
+        ttk.Label(root, textvariable=self.editorial_status, style="Sub.TLabel").pack(anchor="w", pady=(0, 8))
         nightly = ttk.LabelFrame(root, text=" Nightly queue ", padding=(12, 7))
         nightly.pack(fill="x", pady=(0, 12))
         for label, variable, upper in (("Shorts this session", self.target, 10), ("Max hours", self.max_hours, 24), ("Microbatch", self.batch_size, 4)):
@@ -138,6 +169,8 @@ class ClippingApp(tk.Tk):
         controls.pack(fill="x", pady=(0, 12))
         self.start_button = ttk.Button(controls, text="Start Nightly Run", style="Accent.TButton", command=self._start)
         self.start_button.pack(side="left")
+        self.single_start_button = ttk.Button(controls, text="Clip One Episode", command=self._start_single)
+        self.single_start_button.pack(side="left", padx=8)
         self.pause_button = ttk.Button(controls, text="Pause", command=self._toggle_pause, state="disabled")
         self.pause_button.pack(side="left", padx=8)
         self.cancel_button = ttk.Button(controls, text="Stop Safely", command=self._cancel, state="disabled")
@@ -145,6 +178,8 @@ class ClippingApp(tk.Tk):
         self.rescan_button = ttk.Button(controls, text="Rescan Queue", command=self._rescan)
         self.rescan_button.pack(side="left", padx=8)
         ttk.Button(controls, text="Open Output Folder", command=self._open_output).pack(side="right")
+        self.latest_button = ttk.Button(controls, text="Open Latest Results", command=self._open_latest_results, state="disabled")
+        self.latest_button.pack(side="right", padx=8)
         ttk.Button(controls, text="Set Up Vision Model", command=self._setup_vision).pack(side="right", padx=8)
         queue_tools = ttk.Frame(root)
         queue_tools.pack(fill="x", pady=(0, 8))
@@ -180,10 +215,94 @@ class ClippingApp(tk.Tk):
         folder = filedialog.askdirectory(title="Select your video folder")
         if folder:
             self.folder.set(folder)
-            _write_json(PREFERENCES, {"last_folder": folder})
+            self._save_preferences()
             videos = scan_videos(Path(folder), OUTPUT)
             self.detected.set(f"{len(videos)} video{'s' if len(videos) != 1 else ''} detected")
             self._rescan()
+
+    def _save_preferences(self):
+        _write_json(PREFERENCES, {"last_folder": self.folder.get(), "caption_style": self.caption_style.get(),
+                                  "caption_placement": self.caption_placement.get(),
+                                  "editorial_endpoint": self.editorial_endpoint.get(),
+                                  "editorial_model": self.editorial_model.get()})
+
+    def _editorial_status_text(self):
+        if self.editorial_endpoint.get().strip() and self.editorial_model.get().strip():
+            return "Local narrative model configured · loopback and response schema checked when processing starts"
+        return "Narrative AI unavailable · using explainable activity heuristics only"
+
+    def _configure_local_options(self):
+        os.environ["CLIPPER_CAPTION_STYLE"] = self.caption_style.get()
+        os.environ["CLIPPER_CAPTION_PLACEMENT"] = self.caption_placement.get()
+        if self.editorial_endpoint.get().strip():
+            os.environ["CLIPPER_LOCAL_LLM_ENDPOINT"] = self.editorial_endpoint.get().strip()
+        else:
+            os.environ.pop("CLIPPER_LOCAL_LLM_ENDPOINT", None)
+        if self.editorial_model.get().strip():
+            os.environ["CLIPPER_LOCAL_LLM_MODEL"] = self.editorial_model.get().strip()
+        else:
+            os.environ.pop("CLIPPER_LOCAL_LLM_MODEL", None)
+        self._save_preferences()
+
+    def _choose_single(self):
+        if self.running:
+            return
+        path = filedialog.askopenfilename(title="Choose one episode", filetypes=[("Video files", "*.mp4 *.mkv *.mov *.avi *.webm *.m4v"), ("All files", "*.*")])
+        if path:
+            self.single_file.set(path)
+
+    def _start_single(self):
+        source = Path(self.single_file.get())
+        if self.running or not source.is_file() or source.suffix.lower() not in {".mp4", ".mkv", ".mov", ".avi", ".webm", ".m4v"}:
+            messagebox.showinfo("Choose one episode", "Select one supported video file first.", parent=self)
+            return
+        if not self.diagnostics.get("ffmpeg") or not self.diagnostics.get("ffprobe") or not any(self.diagnostics.get("encoders", {}).values()):
+            messagebox.showerror("Media tools unavailable", "FFmpeg, FFprobe and a verified H.264 encoder are required.", parent=self)
+            return
+        subtitle_filter = next((c for c in self.diagnostics["checks"] if c["name"] == "Subtitle filter"), {})
+        if subtitle_filter.get("status") != "available":
+            messagebox.showerror("FFmpeg subtitles unavailable", "This FFmpeg build lacks the libass subtitles filter required to burn captions.", parent=self)
+            return
+        faster = next((item for item in self.diagnostics["checks"] if item["name"] == "Faster-Whisper"), {})
+        transcription = faster.get("status") == "available" and _whisper_model_cached(self.model.get())
+        if not transcription and not messagebox.askyesno("Continue without speech recognition?", "Whisper or its selected model is unavailable. Continue in heuristic-only mode? No model will be downloaded.", parent=self):
+            return
+        if not 1 <= self.count.get() <= 5 or self.minimum.get() < 1 or self.maximum.get() < self.minimum.get() or self.maximum.get() > 180:
+            messagebox.showerror("Invalid settings", "Single-episode mode supports 1–5 clips and durations up to 180 seconds.", parent=self)
+            return
+        if self.semantic.get() and not vision_installation_status().get("ready"):
+            messagebox.showerror("Vision model unavailable", "Disable optional semantic analysis or use a verified local model installation.", parent=self)
+            return
+        self._configure_local_options()
+        self.running = True
+        self.runner = None
+        self.single_start_button.configure(state="disabled")
+        self.start_button.configure(state="disabled")
+        self.select_button.configure(state="disabled")
+        self.cancel_button.configure(state="normal")
+        self.single_cancel = threading.Event()
+        self.status.set(f"Single episode · {source.name}")
+        self.progress.configure(value=0, maximum=1)
+        manager = ModelManager(self.model.get(), local_files_only=True,
+                               status_callback=lambda value: self.queue.put(("model_status", value)))
+        vision = VisionModelManager(status_callback=lambda value: self.queue.put(("vision_status", value))) if self.semantic.get() else None
+        settings = (self.model.get(), self.count.get(), self.minimum.get(), self.maximum.get(), self.encoder.get(), self.semantic.get())
+        threading.Thread(target=self._single_worker, args=(source, settings, manager, vision, transcription), daemon=True).start()
+
+    def _single_worker(self, source, settings, manager, vision, transcription):
+        try:
+            def progress(message):
+                self.queue.put(("log", message))
+                self.queue.put(("status", message))
+            count = process_video(source, OUTPUT, *settings[:4], self.single_cancel, progress, settings[4], manager,
+                                  settings[5], vision, transcription_enabled=transcription)
+            self.queue.put(("single_finished", (source.name, count, _source_output_folder(source))))
+        except Exception as exc:
+            self.queue.put(("single_failed", f"{type(exc).__name__}: {exc}"))
+        finally:
+            manager.release_whisper()
+            if vision:
+                vision.release()
 
     def _rescan(self):
         if self.running:
@@ -290,6 +409,7 @@ class ClippingApp(tk.Tk):
                 "Resume interrupted queue?",
                 "This folder has interrupted episodes. Resume them in this nightly run? Completed, validated clips will be retained.",
                 parent=self)
+        self._configure_local_options()
         self.running = True
         self.progress.configure(value=0, maximum=self.target.get())
         self.select_button.configure(state="disabled")
@@ -302,7 +422,7 @@ class ClippingApp(tk.Tk):
         if not transcription_enabled:
             self.model_status.set("Whisper unavailable · heuristic-only for this run · no download")
         settings = (self.model.get(), self.count.get(), self.minimum.get(), self.maximum.get(), self.encoder.get(), self.semantic.get())
-        _write_json(PREFERENCES, {"last_folder": self.folder.get()})
+        self._save_preferences()
         def progress(message):
             OUTPUT.mkdir(parents=True, exist_ok=True)
             with (OUTPUT / "processing.log").open("a", encoding="utf-8") as log_file:
@@ -397,6 +517,23 @@ class ClippingApp(tk.Tk):
                         self._close_store()
                         self.destroy()
                         return
+                elif kind in {"single_finished", "single_failed"}:
+                    self.running = False
+                    self.single_start_button.configure(state="normal")
+                    self.start_button.configure(state="normal")
+                    self.select_button.configure(state="normal")
+                    self.cancel_button.configure(state="disabled")
+                    if kind == "single_finished":
+                        name, count, self.latest_output = value
+                        self.latest_button.configure(state="normal")
+                        self.status.set(f"Single episode complete · {name} · {count} validated clip(s)")
+                    else:
+                        self.status.set("Single episode failed · see log")
+                        self._log(value)
+                    if self.close_when_finished:
+                        self._close_store()
+                        self.destroy()
+                        return
                 elif kind == "failed":
                     self.running = False
                     self.start_button.configure(state="normal")
@@ -420,6 +557,9 @@ class ClippingApp(tk.Tk):
         if self.runner:
             self.runner.stop()
             self.status.set("Stopping safely after the current operation…")
+        elif getattr(self, "single_cancel", None):
+            self.single_cancel.set()
+            self.status.set("Stopping single-episode processing safely…")
 
     def _toggle_pause(self):
         if not self.runner:
@@ -504,6 +644,14 @@ class ClippingApp(tk.Tk):
             os.startfile(str(OUTPUT))
         else:
             subprocess.Popen(["xdg-open", str(OUTPUT)])
+
+    def _open_latest_results(self):
+        if not self.latest_output or not self.latest_output.is_dir():
+            return
+        if os.name == "nt":
+            os.startfile(str(self.latest_output))
+        else:
+            subprocess.Popen(["xdg-open", str(self.latest_output)])
 
 
 if __name__ == "__main__":

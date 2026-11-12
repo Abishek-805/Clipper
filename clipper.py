@@ -14,6 +14,9 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Callable
 from diagnostics import ffmpeg_path, ffprobe_path, verify_encoder
+from captions import PRESETS, ass_style, group_words
+from editorial import (QUALITY_FLOOR, apply_assessment, assess_candidate, local_endpoint,
+                       transcript_windows)
 from model_manager import ModelManager
 from vision import (VisionModelManager, extract_candidate_frames, read_semantic_cache,
                     semantic_cache_key, write_semantic_cache)
@@ -254,6 +257,50 @@ def _manifest_clip_path(folder: Path, filename: object) -> Path | None:
         return None
     candidate = folder / filename
     return candidate if candidate.resolve().parent == folder.resolve() else None
+
+
+def _write_contact_sheet(folder: Path, clips: list[dict]) -> Path | None:
+    """Create a local review thumbnail grid; failure never invalidates rendered clips."""
+    import shutil
+    import tempfile
+    try:
+        import cv2
+        import numpy as np
+    except ImportError:
+        return None
+    temporary = Path(tempfile.mkdtemp(prefix="clipper-contact-", dir=folder))
+    try:
+        cards = []
+        for index, item in enumerate(clips, 1):
+            source = _manifest_clip_path(folder, item.get("filename"))
+            if source is None or not source.is_file():
+                continue
+            image_path = temporary / f"{index:03}.jpg"
+            try:
+                timestamp = min(1.0, max(0.0, float(item.get("duration", 1)) * .25))
+                _run(["ffmpeg", "-v", "error", "-ss", f"{timestamp:.3f}", "-i", str(source), "-frames:v", "1",
+                      "-vf", "scale=320:568:force_original_aspect_ratio=decrease,pad=320:568:(ow-iw)/2:(oh-ih)/2",
+                      "-q:v", "4", str(image_path)])
+                image = cv2.imread(str(image_path))
+                if image is not None:
+                    cards.append((image, f"{index:03} · {item.get('category', 'clip')} · {item.get('duration', 0):.0f}s"))
+            except Exception:
+                continue
+        if not cards:
+            return None
+        columns, cell_w, cell_h = 3, 360, 640
+        sheet = np.full((((len(cards) + columns - 1) // columns) * cell_h, columns * cell_w, 3), 24, dtype=np.uint8)
+        for index, (image, label) in enumerate(cards):
+            image = cv2.resize(image, (320, 568))
+            x, y = (index % columns) * cell_w + 20, (index // columns) * cell_h + 18
+            sheet[y:y + 568, x:x + 320] = image
+            cv2.putText(sheet, label, (x, y + 600), cv2.FONT_HERSHEY_SIMPLEX, .55, (255, 255, 255), 1, cv2.LINE_AA)
+        target = folder / "clip_contact_sheet.png"
+        return target if cv2.imwrite(str(target), sheet) else None
+    except Exception:
+        return None
+    finally:
+        shutil.rmtree(temporary, ignore_errors=True)
 
 
 def transcribe(path: Path, has_audio: bool, model_size: str, cache: Path, cancel: threading.Event,
@@ -719,15 +766,20 @@ def rank_clips(duration: float, motion: list[float], audio: list[float], cuts: l
                         minimum_distance, context_margin, scoring_weights)["selected"]
 
 
-def _ass_text(words: list[Word], start: float, end: float) -> str:
-    selected = [w for w in words if w.end > start and w.start < end]
+def _ass_text(words: list[Word], start: float, end: float, style: str | None = None,
+              placement: str | None = None) -> str:
+    style = style or os.getenv("CLIPPER_CAPTION_STYLE", "bold_pop")
+    placement = placement or os.getenv("CLIPPER_CAPTION_PLACEMENT", "lower")
+    if style not in PRESETS:
+        style = "bold_pop"
     events = []
-    for offset in range(0, len(selected), 7):
-        line = selected[offset:offset + 7]
-        words_text = [f"{{\\kf{max(1, round((w.end - w.start) * 100))}}}{_ass_escape(w.text)}" for w in line]
-        text = "".join(words_text[:4]) + ("\\N" + "".join(words_text[4:]) if len(words_text) > 4 else "")
+    for line in group_words(words, start, end, style):
+        karaoke = style != "cinematic_minimal"
+        words_text = [f"{{\\kf{max(1, round((w.end - w.start) * 100))}}}{_ass_escape(w.text)}" if karaoke
+                      else _ass_escape(w.text) for w in line]
+        text = " ".join(words_text[:4]) + ("\\N" + " ".join(words_text[4:]) if len(words_text) > 4 else "")
         events.append(f"Dialogue: 0,{_ass_time(max(0, line[0].start-start))},{_ass_time(min(end-start, line[-1].end-start))},Default,,0,0,0,,{text.strip()}")
-    return "\n".join(["[Script Info]", "ScriptType: v4.00+", "PlayResX: 1080", "PlayResY: 1920", "[V4+ Styles]", "Format: Name,Fontname,Fontsize,PrimaryColour,SecondaryColour,OutlineColour,BackColour,Bold,Italic,Underline,StrikeOut,ScaleX,ScaleY,Spacing,Angle,BorderStyle,Outline,Shadow,Alignment,MarginL,MarginR,MarginV,Encoding", "Style: Default,Arial,66,&H00FFFFFF,&H0000D7FF,&H00101010,&H80000000,-1,0,0,0,100,100,0,0,1,5,2,2,70,70,250,1", "[Events]", "Format: Layer,Start,End,Style,Name,MarginL,MarginR,MarginV,Effect,Text", *events])
+    return "\n".join(["[Script Info]", "ScriptType: v4.00+", "WrapStyle: 2", "ScaledBorderAndShadow: yes", "PlayResX: 1080", "PlayResY: 1920", "[V4+ Styles]", "Format: Name,Fontname,Fontsize,PrimaryColour,SecondaryColour,OutlineColour,BackColour,Bold,Italic,Underline,StrikeOut,ScaleX,ScaleY,Spacing,Angle,BorderStyle,Outline,Shadow,Alignment,MarginL,MarginR,MarginV,Encoding", ass_style(style, placement), "[Events]", "Format: Layer,Start,End,Style,Name,MarginL,MarginR,MarginV,Effect,Text", *events])
 
 
 def _ass_escape(text: str) -> str:
@@ -742,9 +794,11 @@ def _ass_time(seconds: float) -> str:
     return f"{hours}:{minutes:02}:{secs:02}.{centiseconds:02}"
 
 
-def _srt(words: list[Word], start: float, end: float) -> str:
-    selected = [w for w in words if w.end > start and w.start < end]
-    chunks = [selected[i:i + 7] for i in range(0, len(selected), 7)]
+def _srt(words: list[Word], start: float, end: float, style: str | None = None) -> str:
+    style = style or os.getenv("CLIPPER_CAPTION_STYLE", "bold_pop")
+    if style not in PRESETS:
+        style = "bold_pop"
+    chunks = group_words(words, start, end, style)
     def stamp(s: float) -> str:
         ms = max(0, int(s * 1000)); h, ms = divmod(ms, 3600000); m, ms = divmod(ms, 60000); sec, ms = divmod(ms, 1000)
         return f"{h:02}:{m:02}:{sec:02},{ms:03}"
@@ -919,7 +973,11 @@ def process_video(path: Path, output_root: Path, model_size: str, clip_count: in
     source_stat = path.stat()
     settings = {"model": model_size, "clip_count": clip_count, "min_length": min_length, "max_length": max_length,
                 "encoder": encoder, "candidate_engine": "scene-aware-variable-v1",
-                "semantic_enabled": semantic_enabled, "transcription_enabled": transcription_enabled}
+                "semantic_enabled": semantic_enabled, "transcription_enabled": transcription_enabled,
+                "editorial_engine": "editorial-v1", "local_editorial_model": os.getenv("CLIPPER_LOCAL_LLM_MODEL", ""),
+                "local_editorial_endpoint": os.getenv("CLIPPER_LOCAL_LLM_ENDPOINT", ""),
+                "caption_style": os.getenv("CLIPPER_CAPTION_STYLE", "bold_pop"),
+                "caption_placement": os.getenv("CLIPPER_CAPTION_PLACEMENT", "lower")}
     existing_manifest = {}
     if manifest_path.exists():
         try:
@@ -1012,6 +1070,66 @@ def process_video(path: Path, output_root: Path, model_size: str, clip_count: in
     stage_started = time.perf_counter()
     selection = select_clips(info.duration, motion, energy, cuts, words, clip_count, min_length, max_length, cancel=cancel)
     stage_timings["candidate_selection_seconds"] = round(time.perf_counter() - stage_started, 3)
+    editorial_summary = {"status": "unavailable", "provider": None, "prompt_version": "editorial-v1",
+                         "quality_floor": QUALITY_FLOOR, "assessed": 0,
+                         "reason": "Local narrative endpoint not configured"}
+    try:
+        endpoint = local_endpoint()
+    except ValueError as exc:
+        endpoint = None
+        editorial_summary["reason"] = str(exc)
+    if endpoint and words:
+        provider_model = os.getenv("CLIPPER_LOCAL_LLM_MODEL", "").strip()
+        if not provider_model:
+            editorial_summary["status"] = "unavailable"
+            editorial_summary["reason"] = "CLIPPER_LOCAL_LLM_MODEL is not configured"
+        else:
+            editorial_summary.update(status="local_model", provider="OpenAI-compatible loopback",
+                                     model=provider_model, endpoint=endpoint)
+            ranked = sorted(selection["candidates"], key=lambda item: item.get("score", 0), reverse=True)[:12]
+            cache_path = folder / "editorial_cache.json"
+            try:
+                editorial_cache = json.loads(cache_path.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                editorial_cache = {"version": "editorial-v1", "entries": {}}
+            if editorial_cache.get("version") != "editorial-v1" or not isinstance(editorial_cache.get("entries"), dict):
+                editorial_cache = {"version": "editorial-v1", "entries": {}}
+            for candidate in ranked:
+                if cancel.is_set():
+                    raise InterruptedError("Processing cancelled")
+                transcript_key = " ".join(word.text for word in words if word.end > candidate["start"] and word.start < candidate["end"])
+                key = hashlib.sha256(json.dumps([fingerprint, endpoint, provider_model, candidate["start"], candidate["end"],
+                                                  hashlib.sha256(transcript_key.encode()).hexdigest(),
+                                                  editorial_summary["prompt_version"]]).encode()).hexdigest()
+                try:
+                    assessment = editorial_cache["entries"].get(key)
+                    if assessment is None:
+                        progress(f"Local editorial assessment · {candidate['start']:.1f}–{candidate['end']:.1f}s")
+                        assessment = assess_candidate(endpoint, provider_model, words, candidate["start"],
+                                                      candidate["end"], transcript.language)
+                        editorial_cache["entries"][key] = assessment
+                        _write_manifest(cache_path, editorial_cache)
+                    apply_assessment(candidate, assessment)
+                    candidate["editorial_category"] = assessment["category"]
+                    candidate["score"] = round(.4 * candidate["score"] + .6 * assessment["editorial_score"], 4)
+                    editorial_summary["assessed"] += 1
+                except Exception as exc:
+                    editorial_summary.update(status="partial_fallback", reason=f"{type(exc).__name__}: {exc}")
+                    progress(f"Narrative AI unavailable for candidate; retaining activity score: {exc}")
+            if editorial_summary["assessed"]:
+                eligible = [item for item in selection["candidates"] if not item.get("editorial_assessed") or item.get("editorial_selected")]
+                unique, rejected_editorial = deduplicate_candidates(eligible, cancel=cancel)
+                selected, rejected_diversity = select_diverse_candidates(unique, clip_count, info.duration, cancel=cancel)
+                for item in selection["candidates"]:
+                    item["selected"] = item in selected
+                selection["selected"] = selected
+                selection["selected_count"] = len(selected)
+                selection["rejections"].extend({"start": item.get("start"), "end": item.get("end"),
+                                                "reason": "editorial quality floor"} for item in selection["candidates"]
+                                               if item.get("editorial_assessed") and not item.get("editorial_selected"))
+                selection["rejections"].extend(rejected_editorial)
+                selection["rejections"].extend(rejected_diversity)
+                selection["rejected_count"] = len(selection["rejections"])
     semantic_summary = {"enabled": semantic_enabled,
                         "status": "deferred" if analysis_only and semantic_enabled else "disabled",
                         "model": None, "analyzed": 0}
@@ -1060,8 +1178,18 @@ def process_video(path: Path, output_root: Path, model_size: str, clip_count: in
                     result = semantic_cache["entries"].get(key)
                     if result is None:
                         progress(f"Semantic analysis · candidate {index}/{len(ranked)}")
-                        frames, temp_dir = extract_candidate_frames(path, candidate["start"], candidate["end"], cancel)
+                        interval_peaks = []
+                        for signal in (motion, energy):
+                            lo = max(0, int(candidate["start"]))
+                            hi = min(len(signal), math.ceil(candidate["end"]))
+                            if hi > lo:
+                                interval_peaks.extend(sorted(range(lo, hi), key=lambda i: signal[i], reverse=True)[:2])
+                        event_times = [float(value) for value in cuts if candidate["start"] <= value < candidate["end"]]
+                        event_times.extend(float(value) + .5 for value in interval_peaks)
+                        frames, temp_dir = extract_candidate_frames(path, candidate["start"], candidate["end"],
+                                                                    cancel, event_times, 12)
                         try:
+                            candidate["sampled_frame_timestamps"] = [frame["timestamp"] for frame in frames]
                             semantic_summary["frames_sampled"] = semantic_summary.get("frames_sampled", 0) + len(frames)
                             if len(frames) < 2:
                                 raise ValueError("Fewer than two valid distinct frames were extracted")
@@ -1113,9 +1241,11 @@ def process_video(path: Path, output_root: Path, model_size: str, clip_count: in
                         "category_diversity_weight": selection.get("category_diversity_weight", 0),
                         "activity_regions": selection["activity_regions"], "speech_regions": selection["speech_regions"],
                         "candidates": selection["candidates"], "rejections": selection["rejections"]}
-    existing_by_interval = {(round(item.get("start", -1), 3), round(item.get("end", -1), 3)): item
-                            for item in existing_manifest.get("clips", []) if isinstance(item, dict)}
+    existing_by_interval = ({(round(item.get("start", -1), 3), round(item.get("end", -1), 3)): item
+                             for item in existing_manifest.get("clips", []) if isinstance(item, dict)}
+                            if existing_manifest.get("settings") == settings else {})
     report_clips = []
+    review_artifacts = {"clip_review": "clip_review.md", "contact_sheet": None}
     processing_phase = "semantic" if semantic_only else "analysis" if analysis_only else "render"
     def persist(queue_stage: str):
         stage_timings["episode_total_seconds"] = round(time.perf_counter() - total_started, 3)
@@ -1126,7 +1256,8 @@ def process_video(path: Path, output_root: Path, model_size: str, clip_count: in
         manifest = {"source": path.name, "source_path": str(path), "source_size": source_stat.st_size,
                     "source_mtime_ns": source_stat.st_mtime_ns, "settings": settings, "source_duration": info.duration,
                     "metadata": asdict(info), "language": transcript.language, "output_resolution": "1080x1920",
-                    "clips": report_clips, "candidate_selection": candidate_report, "semantic_analysis": semantic_summary,
+                    "clips": report_clips, "candidate_selection": candidate_report, "editorial_analysis": editorial_summary,
+                    "semantic_analysis": semantic_summary, "review_artifacts": dict(review_artifacts),
                     "queue_stage": queue_stage, "stage_timings": dict(stage_timings),
                     "stage_timings_by_pass": stage_history,
                     "analysis_cache_status": analysis_cache_status, "scene_cuts": cuts,
@@ -1141,6 +1272,21 @@ def process_video(path: Path, output_root: Path, model_size: str, clip_count: in
                     "transcription_vram_before": transcript.vram_before, "transcription_vram_after": transcript.vram_after,
                     "transcription_peak_vram": transcript.peak_vram}
         _write_manifest(manifest_path, manifest)
+        review = [f"# Clip review · {path.name}", "", f"Source duration: {info.duration:.3f}s",
+                  f"Narrative analysis: {editorial_summary['status']}", ""]
+        if (folder / "clip_contact_sheet.png").is_file():
+            review.append("Contact sheet: [clip_contact_sheet.png](clip_contact_sheet.png)")
+            review.append("")
+        for index, item in enumerate(report_clips, 1):
+            editorial = item.get("editorial", {})
+            review.extend([f"## Clip {index:03} · {item.get('category', 'unclassified')}", "",
+                           f"- Source time: {item.get('start', 0):.3f}–{item.get('end', 0):.3f}s",
+                           f"- Duration: {item.get('duration', 0):.3f}s",
+                           f"- Status: {item.get('validation', item.get('status', 'pending'))}",
+                           f"- Editorial score: {editorial.get('editorial_score', 'not assessed')}",
+                           f"- Reason: {item.get('reason', 'combined activity signals')}",
+                           f"- File: {item.get('filename', 'not rendered')}", ""])
+        (folder / "clip_review.md").write_text("\n".join(review), encoding="utf-8")
     if analysis_only:
         persist("READY_TO_RENDER" if semantic_only and semantic_summary.get("status") in {"completed", "heuristic_fallback"} else "ANALYZED")
         return 0
@@ -1165,7 +1311,7 @@ def process_video(path: Path, output_root: Path, model_size: str, clip_count: in
                 checked = validate_output(previous_mp4, clip["end"] - clip["start"], info.has_audio, previous_srt, cancel=cancel)
                 report_clips.append({**previous, **clip, "filename": previous_filename,
                                      "duration": round(clip["end"] - clip["start"], 3),
-                                     "category": clip.get("semantic_category", "mixed activity"),
+                                     "category": clip.get("editorial_category", clip.get("semantic_category", "mixed activity")),
                                      "status": "completed", "validation": "VALIDATED",
                                      "render": previous.get("render", checked)})
                 progress(f"Reusing validated output {previous_filename} for {path.name}")
@@ -1183,7 +1329,7 @@ def process_video(path: Path, output_root: Path, model_size: str, clip_count: in
         stage_timings[f"clip_{index:03}_validation_seconds"] = render_info.get("validation_seconds", 0)
         progress(f"Validated clip_{index:03}.mp4 · {render_info['encoder']} · {render_info['encoder_note']}")
         report_clip = {"filename": filename, **clip, "duration": round(clip["end"] - clip["start"], 3),
-                       "category": clip.get("semantic_category", "mixed activity"), "status": "completed",
+                       "category": clip.get("editorial_category", clip.get("semantic_category", "mixed activity")), "status": "completed",
                        "validation": "VALIDATED", "render": render_info}
         report_clips.append(report_clip)
         persist("RENDERING")
@@ -1191,5 +1337,10 @@ def process_video(path: Path, output_root: Path, model_size: str, clip_count: in
             clip_validated(report_clip, folder / filename, (folder / filename).with_suffix(".srt"), render_info)
     stage_timings["rendering_seconds"] = round(time.perf_counter() - render_started, 3)
     complete = len(report_clips) >= len(clips)
+    if complete and report_clips:
+        contact_sheet = _write_contact_sheet(folder, report_clips)
+        if contact_sheet:
+            review_artifacts["contact_sheet"] = contact_sheet.name
+            progress(f"Review contact sheet · {contact_sheet.name}")
     persist("COMPLETED" if complete else "READY_TO_RENDER")
     return len(report_clips)
