@@ -115,7 +115,8 @@ def extract_candidate_frames(source: Path, start: float, end: float, cancel=None
             target = directory / f"frame_{index:02}.jpg"
             result = subprocess.run([ffmpeg, "-v", "error", "-ss", f"{timestamp:.3f}", "-i", str(source),
                                      "-frames:v", "1", "-vf", "scale='min(512,iw)':-2", "-q:v", "4", str(target)],
-                                    capture_output=True, text=True, timeout=30)
+                                    capture_output=True, text=True, timeout=30,
+                                    creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0)
             if result.returncode or not target.is_file() or target.stat().st_size < 1000:
                 continue
             import cv2

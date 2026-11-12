@@ -146,17 +146,18 @@ class ModelManagerTests(unittest.TestCase):
             source, cache = root / "voice.wav", root / "transcription.json"
             source.write_bytes(b"approved-sample")
             manager = ModelManager(mode="cpu-int8")
-            with patch.dict(sys.modules, {"faster_whisper": whisper_module()}):
-                first = transcribe(source, True, "small", cache, threading.Event(), model_manager=manager, audio_seconds=1)
+            decoded = types.SimpleNamespace(stdout=b"\0" * 64000, stderr=b"", returncode=0)
+            with patch.dict(sys.modules, {"faster_whisper": whisper_module()}), patch("clipper._run", return_value=decoded):
+                first = transcribe(source, True, "small", cache, threading.Event(), model_manager=manager, audio_seconds=1, audio_index=0)
                 self.assertEqual("CPU_FALLBACK", first.outcome)
                 saved = cache.read_bytes()
-                transcribe(source, True, "small", cache, threading.Event(), model_manager=manager, audio_seconds=1)
+                transcribe(source, True, "small", cache, threading.Event(), model_manager=manager, audio_seconds=1, audio_index=0)
                 self.assertEqual(1, len(FakeModel.instances[0].calls))
-                transcribe(source, True, "small", cache, threading.Event(), model_manager=manager, audio_seconds=1, language="fr")
+                transcribe(source, True, "small", cache, threading.Event(), model_manager=manager, audio_seconds=1, language="fr", audio_index=0)
                 self.assertEqual(2, len(FakeModel.instances[0].calls))
                 second_source = root / "second.wav"
                 second_source.write_bytes(b"another-approved-sample")
-                transcribe(second_source, True, "small", root / "second.json", threading.Event(), model_manager=manager, audio_seconds=1)
+                transcribe(second_source, True, "small", root / "second.json", threading.Event(), model_manager=manager, audio_seconds=1, audio_index=0)
                 self.assertEqual(1, len(FakeModel.instances))
                 before_failed_run = cache.read_bytes()
                 source.write_bytes(b"changed-sample")
@@ -167,7 +168,7 @@ class ModelManagerTests(unittest.TestCase):
                         raise ValueError("bad audio")
 
                 with patch.object(manager, "_whisper_model_class", return_value=FailedModel):
-                    failed = transcribe(source, True, "small", cache, threading.Event(), model_manager=manager, language="de")
+                    failed = transcribe(source, True, "small", cache, threading.Event(), model_manager=manager, language="de", audio_index=0)
                 self.assertEqual("TRANSCRIPTION_FAILED", failed.outcome)
                 self.assertEqual(before_failed_run, cache.read_bytes())
                 self.assertNotEqual(saved, before_failed_run)

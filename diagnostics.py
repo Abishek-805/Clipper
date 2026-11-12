@@ -49,7 +49,8 @@ def ffprobe_path() -> str | None:
 
 def _run(args: list[str], timeout: int = 15) -> subprocess.CompletedProcess[str]:
     try:
-        return subprocess.run(args, capture_output=True, text=True, timeout=timeout, check=False)
+        return subprocess.run(args, capture_output=True, text=True, timeout=timeout, check=False,
+                              creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0)
     except (OSError, subprocess.TimeoutExpired) as exc:
         return subprocess.CompletedProcess(args, 127, "", str(exc))
 

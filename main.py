@@ -12,7 +12,7 @@ import tkinter as tk
 from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 
-from clipper import process_video, scan_videos
+from clipper import process_video, probe, scan_videos
 from diagnostics import collect_diagnostics
 from model_manager import ModelManager, gpu_memory_usage
 from vision import VisionModelManager, vision_installation_status
@@ -48,10 +48,10 @@ def _whisper_model_cached(model_size: str) -> bool:
         return False
 
 
-def _source_output_folder(source: Path) -> Path:
+def _source_output_folder(source: Path, base: Path = OUTPUT) -> Path:
     suffix = hashlib.sha1(str(source.resolve()).casefold().encode()).hexdigest()[:8]
     stem = re.sub(r"[^A-Za-z0-9._-]+", "_", source.stem)
-    return OUTPUT / f"{stem}_{suffix}"
+    return base / f"{stem}_{suffix}"
 
 
 class ClippingApp(tk.Tk):
@@ -75,6 +75,10 @@ class ClippingApp(tk.Tk):
         self.max_hours = tk.IntVar(value=6)
         self.batch_size = tk.IntVar(value=2)
         self.single_file = tk.StringVar(value="")
+        self.audio_track = tk.StringVar(value="Auto (default)")
+        self.audio_track_indices = {}
+        self.caption_source = tk.StringVar(value="Whisper transcription")
+        self.subtitle_track_indices = {}
         self.latest_output: Path | None = None
         self.caption_style = tk.StringVar(value=preferences.get("caption_style", "bold_pop"))
         self.caption_placement = tk.StringVar(value=preferences.get("caption_placement", "auto"))
@@ -133,6 +137,18 @@ class ClippingApp(tk.Tk):
         single_row.pack(fill="x", pady=(0, 12))
         ttk.Button(single_row, text="Choose One Episode…", command=self._choose_single).pack(side="left")
         ttk.Label(single_row, textvariable=self.single_file, style="Sub.TLabel").pack(side="left", padx=10, fill="x", expand=True)
+        track_row = ttk.LabelFrame(root, text=" One-episode stream selection ", padding=(10, 5))
+        track_row.pack(fill="x", pady=(0, 10))
+        ttk.Label(track_row, text="Audio", style="Sub.TLabel").pack(side="left")
+        self.audio_combo = ttk.Combobox(track_row, textvariable=self.audio_track, values=("Auto (default)",), width=38, state="readonly")
+        self.audio_combo.pack(side="left", padx=(5, 14))
+        ttk.Label(track_row, text="Captions", style="Sub.TLabel").pack(side="left")
+        self.caption_combo = ttk.Combobox(track_row, textvariable=self.caption_source,
+                                          values=("Whisper transcription", "Whisper translation to English", "None"),
+                                          width=34, state="readonly")
+        self.caption_combo.pack(side="left", padx=5)
+        self.stream_details = tk.StringVar(value="Choose one episode to inspect its audio and subtitle streams.")
+        ttk.Label(track_row, textvariable=self.stream_details, style="Sub.TLabel", wraplength=950).pack(anchor="w", pady=(5, 0))
         advanced = ttk.LabelFrame(root, text=" Output defaults ", padding=(12, 7))
         advanced.pack(fill="x", pady=(0, 16))
         for label, var, width in [("Clips per video", self.count, 5), ("Min seconds", self.minimum, 5), ("Max seconds", self.maximum, 5)]:
@@ -154,7 +170,7 @@ class ClippingApp(tk.Tk):
         ttk.Label(captions, text="Style", style="Sub.TLabel").pack(side="left")
         ttk.Combobox(captions, textvariable=self.caption_style, values=("bold_pop", "karaoke", "cinematic_minimal", "boxed"), width=18, state="readonly").pack(side="left", padx=(5, 12))
         ttk.Label(captions, text="Placement", style="Sub.TLabel").pack(side="left")
-        ttk.Combobox(captions, textvariable=self.caption_placement, values=("auto", "lower", "middle", "upper"), width=11, state="readonly").pack(side="left", padx=(5, 12))
+        ttk.Combobox(captions, textvariable=self.caption_placement, values=("auto", "bottom", "top"), width=11, state="readonly").pack(side="left", padx=(5, 12))
         ttk.Label(captions, text="Local endpoint/model", style="Sub.TLabel").pack(side="left")
         ttk.Entry(captions, textvariable=self.editorial_endpoint, width=24).pack(side="left", padx=(5, 4))
         ttk.Entry(captions, textvariable=self.editorial_model, width=12).pack(side="left")
@@ -270,7 +286,7 @@ class ClippingApp(tk.Tk):
 
     def _configure_local_options(self):
         os.environ["CLIPPER_CAPTION_STYLE"] = self.caption_style.get()
-        os.environ["CLIPPER_CAPTION_PLACEMENT"] = self.caption_placement.get()
+        os.environ["CLIPPER_CAPTION_PLACEMENT"] = {"top": "upper", "bottom": "lower"}.get(self.caption_placement.get(), "auto")
         os.environ["CLIPPER_CONTENT_TYPE"] = self.content_type.get()
         os.environ["CLIPPER_HIGHLIGHT_PREFERENCE"] = self.highlight_preference.get()
         os.environ["CLIPPER_CLIP_LENGTH_PROFILE"] = self.length_profile.get()
@@ -294,6 +310,29 @@ class ClippingApp(tk.Tk):
         path = filedialog.askopenfilename(title="Choose one episode", filetypes=[("Video files", "*.mp4 *.mkv *.mov *.avi *.webm *.m4v"), ("All files", "*.*")])
         if path:
             self.single_file.set(path)
+            try:
+                streams = probe(Path(path)).streams or []
+                self.audio_track_indices = {"Auto (default)": None}
+                choices = ["Auto (default)"]
+                details = []
+                captions = ["Whisper transcription", "Whisper translation to English", "None"]
+                self.subtitle_track_indices = {}
+                for stream in streams:
+                    details.append(f"#{stream['index']} {stream['type']} · {stream.get('language') or 'und'} · {stream['codec']} · {stream.get('title') or 'untitled'}" + (f" · {stream.get('channels')}ch" if stream.get("channels") else "") + (" · default" if stream["default"] else ""))
+                    if stream["type"] == "audio":
+                        label = f"{stream.get('language') or 'und'} · #{stream['index']} · {stream.get('title') or stream['codec']}" + (" · default" if stream["default"] else "")
+                        choices.append(label)
+                        self.audio_track_indices[label] = stream["index"]
+                    if stream["type"] == "subtitle":
+                        label = f"Embedded {stream.get('language') or 'und'} subtitles · #{stream['index']}"
+                        captions.insert(-1, label)
+                        self.subtitle_track_indices[label] = stream["index"]
+                self.audio_combo.configure(values=choices)
+                self.caption_combo.configure(values=captions)
+                self.audio_track.set(next((label for label in choices[1:] if " · default" in label), choices[0]))
+                self.stream_details.set("Source streams: " + (" | ".join(details) if details else "no audio or subtitle streams"))
+            except Exception as exc:
+                self.stream_details.set(f"Stream inspection failed: {type(exc).__name__}: {exc}")
 
     def _start_single(self):
         source = Path(self.single_file.get())
@@ -331,17 +370,26 @@ class ClippingApp(tk.Tk):
         manager = ModelManager(self.model.get(), local_files_only=True,
                                status_callback=lambda value: self.queue.put(("model_status", value)))
         vision = VisionModelManager(status_callback=lambda value: self.queue.put(("vision_status", value))) if self.semantic.get() else None
+        audio_index = self.audio_track_indices.get(self.audio_track.get())
+        subtitle_index = self.subtitle_track_indices.get(self.caption_source.get())
+        task = "translate" if self.caption_source.get() == "Whisper translation to English" else "transcribe"
         settings = (self.model.get(), self.count.get(), min_length, max_length, self.encoder.get(), self.semantic.get())
-        threading.Thread(target=self._single_worker, args=(source, settings, manager, vision, transcription), daemon=True).start()
+        threading.Thread(target=self._single_worker, args=(source, settings, manager, vision, transcription,
+                                                           audio_index, self.caption_source.get(), task, subtitle_index), daemon=True).start()
 
-    def _single_worker(self, source, settings, manager, vision, transcription):
+    def _single_worker(self, source, settings, manager, vision, transcription, audio_index=None,
+                       caption_source="Whisper transcription", transcription_task="transcribe", subtitle_index=None):
         try:
             def progress(message):
                 self.queue.put(("log", message))
                 self.queue.put(("status", message))
-            count = process_video(source, OUTPUT, *settings[:4], self.single_cancel, progress, settings[4], manager,
-                                  settings[5], vision, transcription_enabled=transcription)
-            self.queue.put(("single_finished", (source.name, count, _source_output_folder(source))))
+            import time
+            output_root = OUTPUT / f"Task06B-{time.strftime('%Y%m%d-%H%M%S')}"
+            count = process_video(source, output_root, *settings[:4], self.single_cancel, progress, settings[4], manager,
+                                  settings[5], vision, transcription_enabled=transcription,
+                                  audio_index=audio_index, caption_source=caption_source,
+                                  transcription_task=transcription_task, subtitle_index=subtitle_index)
+            self.queue.put(("single_finished", (source.name, count, _source_output_folder(source, output_root))))
         except Exception as exc:
             self.queue.put(("single_failed", f"{type(exc).__name__}: {exc}"))
         finally:
@@ -634,7 +682,8 @@ class ClippingApp(tk.Tk):
         def download():
             try:
                 process = subprocess.Popen([sys.executable, str(APP_DIR / "setup_vision_model.py"), "--allow-download"],
-                                           cwd=APP_DIR, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1)
+                                           cwd=APP_DIR, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1,
+                                           creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0)
                 output = []
                 line = ""
                 while char := process.stdout.read(1):

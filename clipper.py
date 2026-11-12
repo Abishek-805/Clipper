@@ -24,7 +24,7 @@ from vision import (VisionModelManager, extract_candidate_frames, read_semantic_
                     semantic_cache_key, write_semantic_cache)
 
 VIDEO_EXTENSIONS = {".mp4", ".mkv", ".mov", ".avi", ".webm", ".m4v"}
-ANALYSIS_ENGINE_VERSION = "task04-signal-engine-v2"
+ANALYSIS_ENGINE_VERSION = "task06b-selected-stream-v1"
 CANDIDATE_SCORE_WEIGHTS = {
     "average_motion": 0.22, "peak_motion": 0.10, "motion_consistency": 0.08,
     "average_audio_energy": 0.20, "audio_energy_variation": 0.08,
@@ -42,6 +42,7 @@ class VideoInfo:
     fps: float
     has_audio: bool
     subtitle_tracks: int
+    streams: list[dict] = None
 
 
 @dataclass
@@ -96,7 +97,10 @@ def _run(args: list[str], cancel: threading.Event | None = None, **kwargs) -> su
         args = [ffmpeg_path() or _missing_tool("FFmpeg"), *args[1:]]
     elif args and args[0] == "ffprobe":
         args = [ffprobe_path() or _missing_tool("FFprobe"), *args[1:]]
-    proc = subprocess.Popen(args, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, **kwargs)
+    if os.name == "nt":
+        kwargs.setdefault("creationflags", subprocess.CREATE_NO_WINDOW)
+    text_mode = kwargs.pop("text", True)
+    proc = subprocess.Popen(args, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=text_mode, **kwargs)
     while True:
         try:
             stdout, stderr = proc.communicate(timeout=0.2)
@@ -121,7 +125,7 @@ def _missing_tool(name: str) -> str:
 
 
 def probe(path: Path) -> VideoInfo:
-    result = _run(["ffprobe", "-v", "error", "-show_entries", "format=duration:stream=codec_type,width,height,avg_frame_rate", "-of", "json", str(path)])
+    result = _run(["ffprobe", "-v", "error", "-show_entries", "format=duration:stream=index,codec_type,codec_name,width,height,avg_frame_rate,channels:stream_tags=language,title:stream_disposition=default", "-of", "json", str(path)])
     data = json.loads(result.stdout)
     streams = data.get("streams", [])
     video = next((s for s in streams if s.get("codec_type") == "video"), None)
@@ -132,13 +136,22 @@ def probe(path: Path) -> VideoInfo:
         fps = float(numerator) / float(denominator) if float(denominator) else 0
     except (ValueError, ZeroDivisionError):
         fps = 0
-    return VideoInfo(float(data.get("format", {}).get("duration", 0)), int(video["width"]), int(video["height"]), fps, any(s.get("codec_type") == "audio" for s in streams), sum(s.get("codec_type") == "subtitle" for s in streams))
+    details = [{"index": s.get("index"), "type": s.get("codec_type"), "codec": s.get("codec_name"),
+                "language": s.get("tags", {}).get("language"), "title": s.get("tags", {}).get("title"),
+                "channels": s.get("channels"), "default": bool(s.get("disposition", {}).get("default"))}
+               for s in streams]
+    return VideoInfo(float(data.get("format", {}).get("duration", 0)), int(video["width"]), int(video["height"]), fps, any(s.get("codec_type") == "audio" for s in streams), sum(s.get("codec_type") == "subtitle" for s in streams), details)
 
 
-def _audio_energy(path: Path, duration: float, cancel: threading.Event) -> list[float]:
+def _audio_energy(path: Path, duration: float, cancel: threading.Event, audio_index: int | None = None) -> list[float]:
     import numpy as np
-    cmd = [ffmpeg_path() or _missing_tool("FFmpeg"), "-v", "error", "-i", str(path), "-map", "0:a:0", "-ac", "1", "-ar", "8000", "-f", "s16le", "-"]
-    proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    if audio_index is None:
+        audio_index = next((s["index"] for s in probe(path).streams if s["type"] == "audio" and s["default"]), None)
+        if audio_index is None:
+            audio_index = next((s["index"] for s in probe(path).streams if s["type"] == "audio"), 0)
+    cmd = [ffmpeg_path() or _missing_tool("FFmpeg"), "-v", "error", "-i", str(path), "-map", f"0:{audio_index}", "-ac", "1", "-ar", "8000", "-f", "s16le", "-"]
+    proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                            creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0)
     bins = max(1, math.ceil(duration))
     totals = np.zeros(bins, dtype=np.float64)
     counts = np.zeros(bins, dtype=np.int64)
@@ -217,9 +230,10 @@ def _scene_cuts(path: Path) -> tuple[list[float], str]:
         return [], f"scene detection failed: {type(exc).__name__}: {exc}"
 
 
-def _analysis_fingerprint(path: Path, stat) -> str:
+def _analysis_fingerprint(path: Path, stat, audio_index: int | None = None) -> str:
     values = {"path": str(path.resolve()), "size": stat.st_size, "mtime_ns": stat.st_mtime_ns,
-              "analysis_schema": 2, "analysis_engine_version": ANALYSIS_ENGINE_VERSION}
+              "audio_stream_index": audio_index, "analysis_schema": 2,
+              "analysis_engine_version": ANALYSIS_ENGINE_VERSION}
     return hashlib.sha256(json.dumps(values, sort_keys=True).encode("utf-8")).hexdigest()
 
 
@@ -309,11 +323,21 @@ def _write_contact_sheet(folder: Path, clips: list[dict]) -> Path | None:
 def transcribe(path: Path, has_audio: bool, model_size: str, cache: Path, cancel: threading.Event,
                progress: Callable[[str], None] | None = None, model_manager: ModelManager | None = None,
                audio_seconds: float | None = None, language: str | None = None,
-               allow_inference: bool = True) -> TranscriptionResult:
+               allow_inference: bool = True, audio_index: int | None = None,
+               task: str = "transcribe") -> TranscriptionResult:
     if not has_audio:
         return TranscriptionResult(None, [], "no_audio_track", "none", "none", outcome="NO_AUDIO", model=model_size)
+    if cancel.is_set():
+        return TranscriptionResult(None, [], "cancelled", "none", "none", "Processing cancelled",
+                                   "CANCELLED", model=model_size)
+    try:
+        import faster_whisper  # noqa: F401
+    except ImportError as exc:
+        return TranscriptionResult(None, [], "unavailable", "none", "none", str(exc),
+                                   "DEPENDENCY_UNAVAILABLE", model=model_size)
     manager = model_manager or _default_model_manager(model_size)
-    settings = {"model": manager.model_identity(model_size), "language": language, "beam_size": 5,
+    settings = {"model": manager.model_identity(model_size), "language": language, "task": task,
+                "audio_stream_index": audio_index, "beam_size": 5,
                 "word_timestamps": True, "vad_filter": True}
     stat = path.stat()
     fingerprint_data = {"source_path": str(path.resolve()), "source_size": stat.st_size,
@@ -338,8 +362,26 @@ def transcribe(path: Path, has_audio: bool, model_size: str, cache: Path, cancel
                                    "Whisper inference was disabled for this heuristic-only session",
                                    "INFERENCE_DISABLED", settings["model"])
     try:
+        import numpy as np
+        selected = audio_index
+        if selected is None:
+            tracks = [item for item in (probe(path).streams or []) if item["type"] == "audio"]
+            selected = next((item["index"] for item in tracks if item["default"]), tracks[0]["index"] if tracks else None)
+        if selected is None:
+            return TranscriptionResult(None, [], "no_audio_track", "none", "none", outcome="NO_AUDIO", model=settings["model"])
+        cmd = [ffmpeg_path() or _missing_tool("FFmpeg"), "-v", "error", "-i", str(path), "-map", f"0:{selected}",
+               "-ac", "1", "-ar", "16000", "-f", "f32le", "-"]
+        if progress:
+            progress(f"Decoding audio stream {selected} · mono 16 kHz float32")
+        decoded = _run(cmd, cancel, text=False)
+        waveform = np.frombuffer(decoded.stdout, dtype=np.float32).copy()
+        decoded_seconds = len(waveform) / 16000
+        if not len(waveform):
+            raise RuntimeError("Selected audio stream decoded to no samples")
+        if progress:
+            progress(f"Audio decoded · {decoded_seconds:.2f}s · {len(waveform)} samples")
         segments, info, transcription_seconds, peak_vram = manager.transcribe(
-            str(path), cancelled=cancel.is_set, language=language, beam_size=5,
+            waveform, cancelled=cancel.is_set, language=language, task=task, beam_size=5,
             word_timestamps=True, vad_filter=True,
         )
         words = []
@@ -365,7 +407,7 @@ def transcribe(path: Path, has_audio: bool, model_size: str, cache: Path, cancel
     if manager_status.get("fallback_reason"):
         if progress:
             progress(manager_status["fallback_reason"])
-    elapsed_audio = audio_seconds if audio_seconds and audio_seconds > 0 else None
+    elapsed_audio = decoded_seconds if decoded_seconds > 0 else audio_seconds
     result = TranscriptionResult(
         info.language, words, status, manager_status["device"], manager_status["compute_type"],
         manager_status.get("fallback_reason", ""), outcome, settings["model"], manager_status.get("init_seconds"),
@@ -734,7 +776,7 @@ def select_diverse_candidates(candidates: list[dict], count: int, duration: floa
                     if features.get("scene_transition_quality", 0.0) >= 0.5 else "sustained audio energy"),
                    (features["speech_density"] * features["dialogue_completeness"], "dialogue segment with complete speech units")]
         reason_score, reason = max(signals, key=lambda item: item[0])
-        candidate["reason"] = reason if reason_score >= 0.15 else "combined activity signals"
+        candidate["reason"] = reason if reason_score >= 0.15 else "activity-only evidence; story meaning was not assessed"
         candidate["selected"] = True
     return sorted(selected, key=lambda item: item["start"]), rejected
 
@@ -746,7 +788,21 @@ def select_clips(duration: float, motion: list[float], audio: list[float], cuts:
     generated = generate_candidates(duration, motion, audio, cuts, words, min_length, max_length, cancel)
     candidates = rank_candidates(generated["candidates"], duration, motion, audio, cuts, words,
                                  min_length, max_length, context_margin, scoring_weights, cancel)
-    unique, duplicate_rejections = deduplicate_candidates(candidates, cancel=cancel)
+    credit_rejections, eligible = [], []
+    valid_words = _valid_words(words, duration)
+    for candidate in candidates:
+        features = candidate["feature_scores"]
+        has_dialogue = any(
+            word.end > candidate["start"] and word.start < candidate["end"] for word in valid_words)
+        likely_credits = (not has_dialogue and features.get("average_motion", 0) < .16 and
+                          (candidate["start"] >= duration * .84 or features.get("average_audio_energy", 0) < .08))
+        if likely_credits:
+            candidate["selected"] = False
+            credit_rejections.append({"start": candidate["start"], "end": candidate["end"],
+                                      "reason": "likely title/credit material: low motion and no dialogue evidence"})
+        else:
+            eligible.append(candidate)
+    unique, duplicate_rejections = deduplicate_candidates(eligible, cancel=cancel)
     selected, selection_rejections = select_diverse_candidates(unique, count, duration, minimum_distance, cancel=cancel)
     selected_ids = {id(candidate) for candidate in selected}
     for candidate in candidates:
@@ -754,6 +810,7 @@ def select_clips(duration: float, motion: list[float], audio: list[float], cuts:
     generated["candidate_count"] = len(generated["candidates"])
     generated["candidates"] = candidates
     generated["selected"] = selected
+    generated["rejections"].extend(credit_rejections)
     generated["rejections"].extend(duplicate_rejections)
     generated["rejections"].extend(selection_rejections)
     generated["rejected_count"] = len(generated["rejections"])
@@ -822,6 +879,33 @@ def _srt(words: list[Word], start: float, end: float, style: str | None = None) 
     return "\n\n".join(entries)
 
 
+def parse_embedded_srt(text: str) -> list[Word]:
+    pattern = re.compile(r"(?m)^\d+\s*\n(\d{2,}:\d{2}:\d{2},\d{3}) --> (\d{2,}:\d{2}:\d{2},\d{3})\s*\n(.+?)(?=\n\s*\n|\Z)", re.S)
+    def seconds(value):
+        hours, minutes, rest = value.split(":")
+        secs, millis = rest.split(",")
+        return int(hours) * 3600 + int(minutes) * 60 + int(secs) + int(millis) / 1000
+    words, seen = [], set()
+    for match in pattern.finditer(text.strip()):
+        start, end = seconds(match.group(1)), seconds(match.group(2))
+        clean = " ".join(re.sub(r"<[^>]*>|\{[^}]*\}", "", match.group(3)).split())
+        if (round(start, 3), round(end, 3), clean) in seen:
+            continue
+        seen.add((round(start, 3), round(end, 3), clean))
+        tokens = re.findall(r"\S+", clean)
+        if not tokens or end <= start:
+            continue
+        step = (end - start) / len(tokens)
+        words.extend(Word(start + i * step, start + (i + 1) * step, token) for i, token in enumerate(tokens))
+    return words
+
+
+def _embedded_subtitles(path: Path, stream_index: int, cancel: threading.Event) -> list[Word]:
+    raw = _run(["ffmpeg", "-v", "error", "-i", str(path), "-map", f"0:{stream_index}",
+                "-c:s", "srt", "-f", "srt", "-"], cancel, text=False).stdout
+    return parse_embedded_srt(raw.decode("utf-8", errors="replace"))
+
+
 def _escape_filter(path: Path) -> str:
     return str(path.resolve()).replace("\\", "/").replace(":", r"\:").replace("'", r"\'")
 
@@ -859,7 +943,8 @@ def _probe_output(path: Path) -> dict:
 
 
 def validate_output(path: Path, expected_duration: float, has_audio: bool, srt_path: Path,
-                    deep_verify: bool = True, cancel: threading.Event | None = None) -> dict:
+                    deep_verify: bool = True, cancel: threading.Event | None = None,
+                    captions_required: bool = True) -> dict:
     if not path.is_file() or path.stat().st_size == 0:
         raise RuntimeError("Rendered output is missing or empty")
     data = _probe_output(path)
@@ -896,7 +981,9 @@ def validate_output(path: Path, expected_duration: float, has_audio: bool, srt_p
         video_duration = float(video.get("duration", duration) or duration)
         if start_delta > 0.1 or abs(audio_duration - video_duration) > 0.25:
             raise RuntimeError(f"Audio/video timing differs (start {start_delta:.3f}s, duration {abs(audio_duration-video_duration):.3f}s)")
-    cues = validate_srt(srt_path, duration)
+    cues = validate_srt(srt_path, duration, allow_empty=not captions_required)
+    if captions_required and cues == 0:
+        raise RuntimeError("Caption source was requested but produced zero subtitle cues")
     if deep_verify:
         _run(["ffmpeg", "-v", "error", "-i", str(path), "-f", "null", "-"], cancel)
     return {"container": "mp4", "video_codec": "h264", "audio_codec": "aac" if audio else None,
@@ -961,7 +1048,8 @@ def _render_filter(info: VideoInfo, clip: dict, ass_path: Path, reframe_plan: di
 
 def render(path: Path, output: Path, info: VideoInfo, clip: dict, words: list[Word], has_audio: bool,
            cancel: threading.Event, encoder: str = "auto", reframe_plan: dict | None = None,
-           caption_shots: list[dict] | None = None) -> dict:
+           caption_shots: list[dict] | None = None, audio_index: int | None = None,
+           captions_required: bool = True) -> dict:
     output.parent.mkdir(parents=True, exist_ok=True)
     srt_path = output.with_suffix(".srt")
     temp_video = output.with_name(output.stem + ".partial" + output.suffix)
@@ -975,9 +1063,15 @@ def render(path: Path, output: Path, info: VideoInfo, clip: dict, words: list[Wo
                                   placements=caption_shots), encoding="utf-8-sig")
     try:
         filt = _render_filter(info, clip, ass_path, reframe_plan)
-        cmd = ["ffmpeg", "-y", "-ss", f"{clip['start']:.3f}", "-i", str(path), "-t", f"{duration:.3f}", "-filter_complex", filt, "-map", "[v]"]
+        cmd = ["ffmpeg", "-y", "-ss", f"{clip['start']:.3f}", "-i", str(path), "-t", f"{duration:.3f}", "-filter_complex", filt, "-map", "[v]", "-map_metadata", "-1", "-map_chapters", "-1"]
         if has_audio:
-            cmd += ["-map", "0:a:0", "-af", "loudnorm=I=-16:TP=-1.5:LRA=11", "-c:a", "aac", "-b:a", "192k"]
+            if audio_index is None:
+                audio_index = next((s["index"] for s in (info.streams or []) if s["type"] == "audio" and s["default"]),
+                                   next((s["index"] for s in (info.streams or []) if s["type"] == "audio"), 0))
+            track = next((s for s in (info.streams or []) if s["index"] == audio_index), {})
+            cmd += ["-map", f"0:{audio_index}", "-af", "loudnorm=I=-16:TP=-1.5:LRA=11", "-c:a", "aac", "-b:a", "192k"]
+            if track.get("language"):
+                cmd += ["-metadata:s:a:0", f"language={track['language']}"]
         else:
             cmd += ["-an"]
         cmd += ["-c:v", selected_encoder]
@@ -987,7 +1081,8 @@ def render(path: Path, output: Path, info: VideoInfo, clip: dict, words: list[Wo
         _run(cmd, cancel)
         encode_seconds = time.perf_counter() - encode_started
         validation_started = time.perf_counter()
-        checked = validate_output(temp_video, duration, has_audio, temp_srt, cancel=cancel)
+        checked = validate_output(temp_video, duration, has_audio, temp_srt, cancel=cancel,
+                                  captions_required=captions_required)
         validation_seconds = time.perf_counter() - validation_started
         if cancel.is_set():
             raise InterruptedError("Processing cancelled")
@@ -1010,11 +1105,18 @@ def process_video(path: Path, output_root: Path, model_size: str, clip_count: in
                   release_vision_on_exit: bool = True,
                   clip_validated: Callable[[dict, Path, Path, dict], None] | None = None,
                   should_continue: Callable[[], bool] | None = None,
-                  transcription_enabled: bool = True, semantic_only: bool = False) -> int:
+                  transcription_enabled: bool = True, semantic_only: bool = False,
+                  audio_index: int | None = None, caption_source: str = "whisper",
+                  transcription_task: str = "transcribe", subtitle_index: int | None = None) -> int:
     total_started = time.perf_counter()
     stage_timings = {}
     stage_started = time.perf_counter()
     info = probe(path)
+    audio_tracks = [item for item in (info.streams or []) if item["type"] == "audio"]
+    if audio_index is None and audio_tracks:
+        audio_index = next((item["index"] for item in audio_tracks if item["default"]), audio_tracks[0]["index"])
+    if audio_index is not None and audio_index not in {item["index"] for item in audio_tracks}:
+        raise ValueError(f"Selected audio stream {audio_index} is not an audio stream in {path.name}")
     stage_timings["metadata_probe_seconds"] = round(time.perf_counter() - stage_started, 3)
     suffix = hashlib.sha1(str(path.resolve()).casefold().encode()).hexdigest()[:8]
     folder = output_root / f"{re.sub(r'[^A-Za-z0-9._-]+', '_', path.stem)}_{suffix}"
@@ -1034,7 +1136,9 @@ def process_video(path: Path, output_root: Path, model_size: str, clip_count: in
                 "highlight_preference": os.getenv("CLIPPER_HIGHLIGHT_PREFERENCE", "Auto"),
                 "clip_length_profile": os.getenv("CLIPPER_CLIP_LENGTH_PROFILE", "Auto"),
                 "caption_style": os.getenv("CLIPPER_CAPTION_STYLE", "bold_pop"),
-                "caption_placement": os.getenv("CLIPPER_CAPTION_PLACEMENT", "auto")}
+                "caption_placement": os.getenv("CLIPPER_CAPTION_PLACEMENT", "auto"),
+                "audio_stream_index": audio_index, "caption_source": caption_source,
+                "transcription_task": transcription_task, "subtitle_stream_index": subtitle_index}
     existing_manifest = {}
     if manifest_path.exists():
         try:
@@ -1066,7 +1170,7 @@ def process_video(path: Path, output_root: Path, model_size: str, clip_count: in
         progress(f"Skipped {path.name}: {info.duration:.1f}s is shorter than the {min_length}s minimum")
         return 0
     stage_started = time.perf_counter()
-    fingerprint = _analysis_fingerprint(path, source_stat)
+    fingerprint = _analysis_fingerprint(path, source_stat, audio_index)
     cached_analysis = _read_analysis_cache(analysis_cache_path, fingerprint)
     stage_timings["cache_check_seconds"] = round(time.perf_counter() - stage_started, 3)
     if cached_analysis:
@@ -1079,7 +1183,7 @@ def process_video(path: Path, output_root: Path, model_size: str, clip_count: in
     else:
         stage_started = time.perf_counter()
         try:
-            energy = _audio_energy(path, info.duration, cancel) if info.has_audio else [0.0] * max(1, math.ceil(info.duration))
+            energy = _audio_energy(path, info.duration, cancel, audio_index) if audio_index is not None else [0.0] * max(1, math.ceil(info.duration))
             audio_analysis_valid = True
         except InterruptedError:
             raise
@@ -1113,7 +1217,20 @@ def process_video(path: Path, output_root: Path, model_size: str, clip_count: in
     progress(f"Transcribing {path.name}" if info.has_audio else f"No audio track in {path.name}")
     stage_started = time.perf_counter()
     transcript = transcribe(path, info.has_audio, model_size, cache, cancel, progress, model_manager, info.duration,
-                            allow_inference=transcription_enabled)
+                            allow_inference=transcription_enabled and caption_source.lower().startswith("whisper"),
+                            audio_index=audio_index, task=transcription_task)
+    if caption_source.startswith("Embedded"):
+        subtitle_tracks = [item for item in (info.streams or []) if item["type"] == "subtitle"]
+        selected_sub = subtitle_index if subtitle_index is not None else next((s["index"] for s in subtitle_tracks if s["default"]), None)
+        if selected_sub not in {item["index"] for item in subtitle_tracks}:
+            raise ValueError(f"Selected subtitle stream {selected_sub} is not a subtitle stream in {path.name}")
+        embedded_words = _embedded_subtitles(path, selected_sub, cancel)
+        selected_info = next(item for item in subtitle_tracks if item["index"] == selected_sub)
+        transcript = TranscriptionResult(selected_info.get("language"), embedded_words,
+                                         "transcribed" if embedded_words else "no_speech", "embedded_subtitle", "n/a",
+                                         "Embedded subtitle cue timings distributed across cue words",
+                                         "SUCCESS" if embedded_words else "NO_SPEECH", "embedded subtitles",
+                                         audio_seconds=info.duration)
     stage_timings["transcription_seconds"] = round(time.perf_counter() - stage_started, 3)
     if transcript.outcome == "CANCELLED":
         raise InterruptedError(transcript.message or "Processing cancelled")
@@ -1326,6 +1443,8 @@ def process_video(path: Path, output_root: Path, model_size: str, clip_count: in
         manifest = {"source": path.name, "source_path": str(path), "source_size": source_stat.st_size,
                     "source_mtime_ns": source_stat.st_mtime_ns, "settings": settings, "source_duration": info.duration,
                     "metadata": asdict(info), "language": transcript.language, "output_resolution": "1080x1920",
+                    "selected_audio_stream_index": audio_index, "caption_source": caption_source,
+                    "transcription_task": transcription_task,
                     "clips": report_clips, "candidate_selection": candidate_report, "editorial_analysis": editorial_summary,
                     "semantic_analysis": semantic_summary, "candidate_storyboard": dict(storyboard_summary),
                     "review_artifacts": dict(review_artifacts),
@@ -1355,7 +1474,7 @@ def process_video(path: Path, output_root: Path, model_size: str, clip_count: in
                            f"- Duration: {item.get('duration', 0):.3f}s",
                            f"- Status: {item.get('validation', item.get('status', 'pending'))}",
                            f"- Editorial score: {editorial.get('editorial_score', 'not assessed')}",
-                           f"- Reason: {item.get('reason', 'combined activity signals')}",
+                           f"- Reason: {item.get('reason', 'activity-only evidence; story meaning was not assessed')}",
                            f"- File: {item.get('filename', 'not rendered')}", ""])
         (folder / "clip_review.md").write_text("\n".join(review), encoding="utf-8")
     if analysis_only:
@@ -1382,7 +1501,7 @@ def process_video(path: Path, output_root: Path, model_size: str, clip_count: in
                 checked = validate_output(previous_mp4, clip["end"] - clip["start"], info.has_audio, previous_srt, cancel=cancel)
                 report_clips.append({**previous, **clip, "filename": previous_filename,
                                      "duration": round(clip["end"] - clip["start"], 3),
-                                     "category": clip.get("editorial_category", clip.get("semantic_category", "mixed activity")),
+                                     "category": clip.get("editorial_category", clip.get("semantic_category", "activity-only")),
                                      "status": "completed", "validation": "VALIDATED",
                                      "render": previous.get("render", checked)})
                 progress(f"Reusing validated output {previous_filename} for {path.name}")
@@ -1413,14 +1532,14 @@ def process_video(path: Path, output_root: Path, model_size: str, clip_count: in
         caption_plan = shot_placements(reframe_plan.get("shots", []), os.getenv("CLIPPER_CAPTION_PLACEMENT", "auto"))
         for shot, placement in zip(reframe_plan.get("shots", []), caption_plan):
             shot["caption_placement"] = placement
-        render_info = render(path, folder / filename, info, clip, words, info.has_audio, cancel, encoder,
-                             reframe_plan, caption_plan)
+        render_info = render(path, folder / filename, info, clip, words, audio_index is not None, cancel, encoder,
+                             reframe_plan, caption_plan, audio_index, caption_source != "None")
         stage_timings[f"clip_{index:03}_render_call_seconds"] = round(time.perf_counter() - clip_started, 3)
         stage_timings[f"clip_{index:03}_encoding_seconds"] = render_info.get("encode_seconds", 0)
         stage_timings[f"clip_{index:03}_validation_seconds"] = render_info.get("validation_seconds", 0)
         progress(f"Validated clip_{index:03}.mp4 · {render_info['encoder']} · {render_info['encoder_note']}")
         report_clip = {"filename": filename, **clip, "duration": round(clip["end"] - clip["start"], 3),
-                       "category": clip.get("editorial_category", clip.get("semantic_category", "mixed activity")), "status": "completed",
+                       "category": clip.get("editorial_category", clip.get("semantic_category", "activity-only")), "status": "completed",
                        "validation": "VALIDATED", "reframing": reframe_plan,
                        "caption_placements": caption_plan, "caption_style": settings["caption_style"],
                        "caption_placement": settings["caption_placement"], "render": render_info}

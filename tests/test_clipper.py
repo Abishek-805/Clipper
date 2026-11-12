@@ -8,7 +8,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 import clipper
-from clipper import TranscriptionResult, Word, _scene_cuts, _srt, probe, process_video, rank_clips, render, scan_videos, transcribe, validate_srt
+from clipper import TranscriptionResult, Word, _scene_cuts, _srt, parse_embedded_srt, probe, process_video, rank_clips, render, scan_videos, transcribe, validate_srt
 from diagnostics import collect_diagnostics, ffmpeg_path, ffprobe_path, verify_encoder
 
 
@@ -75,6 +75,25 @@ class ClipperTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "timestamps"):
                 validate_srt(path, 10)
 
+    def test_embedded_srt_cues_keep_source_times_and_split_words(self):
+        words = parse_embedded_srt("1\n00:01:00,000 --> 00:01:02,000\n<font>hello world</font>\n")
+        self.assertEqual(["hello", "world"], [word.text for word in words])
+        self.assertEqual((60.0, 62.0), (words[0].start, words[-1].end))
+
+    def test_requested_caption_validation_rejects_zero_cues(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            output, srt = root / "clip.mp4", root / "clip.srt"
+            output.write_bytes(b"output")
+            srt.write_text("", encoding="utf-8")
+            metadata = {"streams": [{"codec_type": "video", "codec_name": "h264", "width": 1080,
+                         "height": 1920, "pix_fmt": "yuv420p", "avg_frame_rate": "30/1", "duration": "2", "start_time": "0"},
+                         {"codec_type": "audio", "codec_name": "aac", "duration": "2", "start_time": "0"}],
+                        "format": {"duration": "2", "format_name": "mp4"}}
+            with patch("clipper._probe_output", return_value=metadata):
+                with self.assertRaisesRegex(ValueError, "empty"):
+                    clipper.validate_output(output, 2, True, srt, deep_verify=False, captions_required=True)
+
     def test_transcription_states_and_cuda_precision_fallback(self):
         with tempfile.TemporaryDirectory() as tmp:
             video = Path(tmp) / "source.mp4"
@@ -101,8 +120,9 @@ class ClipperTests(unittest.TestCase):
             ctranslate = types.ModuleType("ctranslate2")
             ctranslate.get_cuda_device_count = lambda: 1
             ctranslate.get_supported_compute_types = lambda device: {"int8"} if device == "cpu" else {"int8_float16"}
-            with patch.dict(sys.modules, {"faster_whisper": whisper, "ctranslate2": ctranslate}):
-                result = transcribe(video, True, "small", cache, threading.Event())
+            with patch.dict(sys.modules, {"faster_whisper": whisper, "ctranslate2": ctranslate}), \
+                 patch("clipper._run", return_value=types.SimpleNamespace(stdout=b"\0" * 64000, stderr=b"", returncode=0)):
+                result = transcribe(video, True, "small", cache, threading.Event(), audio_index=0)
             self.assertEqual(("transcribed", "cpu", "int8"), (result.status, result.device, result.precision))
             self.assertIn("initialization failed", result.message)
 
@@ -155,7 +175,7 @@ class ClipperTests(unittest.TestCase):
             root = Path(tmp)
             source = self._make_video(root, False)
             output = root / "silent_output.mp4"
-            rendered = render(source, output, probe(source), {"start": 0, "end": 2}, [], False, threading.Event(), "libx264")
+            rendered = render(source, output, probe(source), {"start": 0, "end": 2}, [], False, threading.Event(), "libx264", captions_required=False)
             self.assertIsNone(rendered["audio_codec"])
             self.assertFalse(rendered["audio_video_sync_checked"])
 
@@ -173,7 +193,8 @@ class ClipperTests(unittest.TestCase):
             output = root / "shot_plan.mp4"
             result = render(source, output, probe(source), {"start": 0, "end": 2}, [], False,
                             threading.Event(), "libx264", plan,
-                            [{"start": 0, "end": 1, "anchor": "lower"}, {"start": 1, "end": 2, "anchor": "upper"}])
+                            [{"start": 0, "end": 1, "anchor": "lower"}, {"start": 1, "end": 2, "anchor": "upper"}],
+                            captions_required=False)
             self.assertEqual(["saliency_crop", "full_frame_contain"], result["composition_modes"])
             self.assertEqual((1080, 1920), (result["width"], result["height"]))
 
@@ -185,7 +206,7 @@ class ClipperTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             source = self._make_video(root, False, duration=1)
-            rendered = render(source, root / "nvenc.mp4", probe(source), {"start": 0, "end": 1}, [], False, threading.Event(), "h264_nvenc")
+            rendered = render(source, root / "nvenc.mp4", probe(source), {"start": 0, "end": 1}, [], False, threading.Event(), "h264_nvenc", captions_required=False)
             self.assertEqual("h264_nvenc", rendered["encoder"])
 
     @unittest.skipUnless(ffmpeg_path() and ffprobe_path(), "FFmpeg/FFprobe unavailable")

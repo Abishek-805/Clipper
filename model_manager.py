@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import gc
+import os
 import subprocess
 import threading
 import time
@@ -14,6 +15,7 @@ def gpu_memory_usage() -> dict | None:
         result = subprocess.run(
             ["nvidia-smi", "--query-gpu=index,name,memory.total,memory.free,memory.used", "--format=csv,noheader,nounits"],
             capture_output=True, text=True, check=True, timeout=5,
+            creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
         )
         line = result.stdout.strip().splitlines()[0]
         index, name, total, free, used = [part.strip() for part in line.split(",", 4)]

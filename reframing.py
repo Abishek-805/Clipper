@@ -172,6 +172,15 @@ def build_reframe_plan(source: Path, start: float, end: float, cuts: list[float]
     width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
     height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
     intervals = shot_intervals(start, end, cuts)
+    if not hasattr(cv2, "CascadeClassifier"):
+        cap.release()
+        return {"version": PLAN_VERSION, "status": "blurred_background", "source_width": width,
+                "source_height": height, "analysis_samples": 0,
+                "reason": "face-aware smart crop unavailable in installed OpenCV; full-frame blurred background selected",
+                "shots": [{"shot_id": index, "start": left, "end": right,
+                           "composition": "full_frame_contain", "crop": None, "focus_path": [],
+                           "obstructions": [], "evidence": "intentional blurred-background layout"}
+                          for index, (left, right) in enumerate(intervals)]}
     sample_budget = max(1, MAX_ANALYSIS_SAMPLES // max(1, len(intervals)))
     shots = []
     cascade = cv2.CascadeClassifier(str(Path(cv2.data.haarcascades) / "haarcascade_frontalface_default.xml"))
