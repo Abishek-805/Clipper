@@ -8,7 +8,7 @@ A local Windows desktop app that scans a selected folder, ranks short segments f
 2. Double-click `setup.bat`, then `run.bat`.
 3. Select a video folder and click **Start Automatic Clipping**.
 
-Faster-Whisper downloads the selected multilingual model (`small` by default) the first time it is used. Model downloads are hosted by Hugging Face and are typically hundreds of MB; exact size varies by model revision. Processing uses CUDA when CTranslate2 can load a CUDA device, with CPU int8 fallback. Video processing is sequential. After model weights are cached, analysis and rendering are local.
+Faster-Whisper downloads the selected multilingual model (`small` by default, about 486 MB) the first time it is used. Processing uses CUDA when CTranslate2 can load a CUDA device, with CPU int8 fallback. Faster-Whisper's current Windows GPU path needs CUDA 12 and cuDNN 9 runtime libraries on `PATH`; otherwise it uses the CPU. Video processing is sequential. After model weights are cached, analysis and rendering are local.
 
 ## Output
 
@@ -21,6 +21,7 @@ Moment ranking is a local heuristic, not semantic understanding: it can score ac
 ## Requirements / limits
 
 - Windows 10/11, Python 3.11+, FFmpeg and FFprobe on `PATH`.
+- GPU transcription requires compatible NVIDIA CUDA/cuDNN runtime libraries; CPU int8 is the fallback.
 - Optional packages installed by `setup.bat`: OpenCV, PySceneDetect and Faster-Whisper.
 - One source video is analyzed at a time. The source's first audio track is used.
 - Output uses H.264/AAC where audio exists, 1080×1920, 30 FPS, yuv420p and fast-start MP4.
