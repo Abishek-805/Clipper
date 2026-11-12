@@ -60,4 +60,4 @@ The implementation follows the concepts summarized in [REFERENCE_ARCHITECTURE_DE
 
 ## Git delivery
 
-The starting branch was `main` at `b4d44ba490b6c4e27c026feb7f1205bddba1c3a5`, clean and equal to `origin/main`. The original Task 05 implementation is `7b0636b`. Task 05C implementation commit: `2d968ab` (`Complete Task 05C framing and review tools`). Documentation is committed separately; its commit ID, push result and final working-tree state are stated in the final delivery.
+The starting branch was `main` at `b4d44ba490b6c4e27c026feb7f1205bddba1c3a5`, clean and equal to `origin/main`. The original Task 05 implementation is `7b0636b`. Task 05C implementation commit: `2d968ab` (`Complete Task 05C framing and review tools`). Documentation commit: `c614df3` (`Document Task 05C completion and limits`). This report's final commit-ID annotation is a separate documentation-only follow-up. Both commits were pushed to `origin/main`.
