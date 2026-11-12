@@ -1,6 +1,6 @@
 # AI Video Clipping Factory
 
-A local Windows desktop app that scans a selected folder, ranks short segments from audio energy, visual motion, scene cuts and speech density, then renders reviewable 9:16 Shorts with original audio and word-timed captions.
+A local Windows desktop app that scans a selected folder, proposes variable-duration segments from scene boundaries, visual motion, audio energy and grouped dialogue, then renders reviewable 9:16 Shorts with original audio and word-timed captions.
 
 ## Start
 
@@ -18,7 +18,9 @@ If Clipper closes while processing, it stops after the current operation, keeps 
 
 The portrait layout keeps the full source frame visible over a blurred fill, preventing important action from being cropped. Captions are burned in with word highlighting and are also available as SRT. Transcription status distinguishes no audio, no speech, unavailable model support and transcription failure in the GUI log and analysis.json; clips still render without invented subtitles.
 
-Moment ranking is a local heuristic, not semantic understanding: it can score activity and speech density, but it cannot reliably know whether a moment is funny, emotional, or narratively important. Review all clips before publishing.
+Candidate selection proposes intervals from scene groups, sustained signal activity, and pause/sentence-grouped dialogue, then scores normalized audio, motion, speech, scene continuity, and boundary features. Overlapping and low-scoring candidates are rejected; short sources below the minimum are skipped and recorded. The analysis_cache.json file stores source-fingerprinted motion, audio, and scene signals for reuse when clip settings change. The GUI status and analysis.json show candidate counts, selected durations, feature scores, and rejection reasons.
+
+Moment ranking is a local heuristic, not semantic understanding: it can score activity and speech density, but it cannot reliably know whether a moment is funny, emotional, or narratively important. The synthetic candidate benchmark checks interval behavior against planted signal events only; it does not establish real-world entertainment quality. Review all clips before publishing.
 
 ## Requirements / limits
 
@@ -32,6 +34,7 @@ Moment ranking is a local heuristic, not semantic understanding: it can score ac
 ## Developer checks
 
 Run python diagnostics.py to check FFmpeg/FFprobe, NVIDIA hardware, CUDA support, and usable encoders. Run python -m unittest discover -s tests -v for the synthetic rendering integration suite. NVENC tests skip if the runtime encoder probe fails.
+Run python benchmark_candidates.py to regenerate the deterministic signal benchmark and its JSON/Markdown reports under reports/.
 
 Whisper loads only after **Start Automatic Clipping** and is reused across videos in one batch. Automatic mode prefers CUDA `int8_float16` when the installed CTranslate2 runtime reports support, with CPU int8 fallback; CUDA OOM during inference retries once on CPU. Transcription cache entries are keyed to the source file and transcription settings and are replaced only after a complete successful transcription.
 

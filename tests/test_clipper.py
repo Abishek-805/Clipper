@@ -45,9 +45,9 @@ class ClipperTests(unittest.TestCase):
         motion, audio = [0.0] * 120, [0.0] * 120
         motion[20:30], audio[70:80] = [8.0] * 10, [5.0] * 10
         words = [Word(19.7, 20.0, "before"), Word(24, 24.2, "inside"), Word(45, 45.2, "after")]
-        clips = rank_clips(60, motion, audio, [20, 75], words, count=2, min_length=20, max_length=25)
+        clips = rank_clips(120, motion, audio, [20, 75], words, count=2, min_length=20, max_length=25)
         self.assertEqual(2, len(clips))
-        self.assertTrue(all(0 <= c["start"] < c["end"] <= 60 for c in clips))
+        self.assertTrue(all(0 <= c["start"] < c["end"] <= 120 for c in clips))
         self.assertTrue(all(c["end"] - c["start"] <= 25 and "reason" in c and "score" in c for c in clips))
 
     def test_srt_generation_and_validation(self):
@@ -171,6 +171,9 @@ class ClipperTests(unittest.TestCase):
             self.assertEqual("transcribed", data["transcription_status"])
             self.assertEqual("libx264", data["clips"][0]["render"]["encoder"])
             self.assertIn("Scene detection:", "\n".join(progress))
+            self.assertIn("Candidates ·", "\n".join(progress))
+            self.assertIn("candidate_selection", data)
+            self.assertEqual(1, data["candidate_selection"]["selected_count"])
             self.assertEqual((1080, 1920), (data["clips"][0]["render"]["width"], data["clips"][0]["render"]["height"]))
 
 

@@ -1,0 +1,73 @@
+{
+  "benchmark": "synthetic-candidate-selection-v1",
+  "scope": "deterministic signal fixture only; not a real-world entertainment-quality claim",
+  "expected_intervals": [
+    {
+      "label": "motion-heavy",
+      "start": 18.0,
+      "end": 45.0
+    },
+    {
+      "label": "audio-heavy",
+      "start": 70.0,
+      "end": 96.0
+    },
+    {
+      "label": "dialogue-heavy",
+      "start": 120.0,
+      "end": 149.5
+    },
+    {
+      "label": "silent-visual",
+      "start": 170.0,
+      "end": 198.0
+    }
+  ],
+  "candidate_count": 34,
+  "rejected_count": 30,
+  "selected_count": 4,
+  "selection_runtime_seconds": 0.004974,
+  "candidate_scoring_per_second": 6834.9,
+  "selected_intervals": [
+    {
+      "start": 18,
+      "end": 45,
+      "duration": 27,
+      "score": 0.54,
+      "reason": "high visual motion with sustained activity"
+    },
+    {
+      "start": 70,
+      "end": 96,
+      "duration": 26,
+      "score": 0.3,
+      "reason": "strong audio event with scene continuity"
+    },
+    {
+      "start": 120.0,
+      "end": 150,
+      "duration": 30.0,
+      "score": 0.28,
+      "reason": "dialogue segment with complete speech units"
+    },
+    {
+      "start": 170,
+      "end": 198,
+      "duration": 28,
+      "score": 0.5,
+      "reason": "high visual motion with sustained activity"
+    }
+  ],
+  "metrics": {
+    "candidate_recall": 1.0,
+    "selected_interval_precision": 1.0,
+    "mean_best_temporal_iou": 0.9958,
+    "selected_duplicate_rate": 0.0,
+    "average_clip_duration_seconds": 27.75,
+    "invalid_boundary_count": 0
+  },
+  "inactive_interval_seconds": [
+    210,
+    240
+  ]
+}

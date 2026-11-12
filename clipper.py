@@ -8,6 +8,7 @@ import os
 import re
 import subprocess
 import threading
+from bisect import bisect_left
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Callable
@@ -15,6 +16,13 @@ from diagnostics import ffmpeg_path, ffprobe_path, verify_encoder
 from model_manager import ModelManager
 
 VIDEO_EXTENSIONS = {".mp4", ".mkv", ".mov", ".avi", ".webm", ".m4v"}
+CANDIDATE_SCORE_WEIGHTS = {
+    "average_motion": 0.22, "peak_motion": 0.10, "motion_consistency": 0.08,
+    "average_audio_energy": 0.20, "audio_energy_variation": 0.08,
+    "speech_density": 0.10, "dialogue_completeness": 0.08,
+    "scene_transition_quality": 0.08, "boundary_confidence": 0.06,
+}
+CANDIDATE_SCORE_PENALTIES = {"excessive_silence": 0.12, "static_interval": 0.04}
 
 
 @dataclass
@@ -198,6 +206,35 @@ def _scene_cuts(path: Path) -> tuple[list[float], str]:
         return [], f"scene detection failed: {type(exc).__name__}: {exc}"
 
 
+def _analysis_fingerprint(path: Path, stat) -> str:
+    values = {"path": str(path.resolve()), "size": stat.st_size, "mtime_ns": stat.st_mtime_ns, "analysis_schema": 1}
+    return hashlib.sha256(json.dumps(values, sort_keys=True).encode("utf-8")).hexdigest()
+
+
+def _read_analysis_cache(path: Path, fingerprint: str) -> dict | None:
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+        if (data.get("schema") == 1 and data.get("fingerprint") == fingerprint and
+                isinstance(data.get("motion"), list) and isinstance(data.get("audio_energy"), list) and
+                isinstance(data.get("scene_cuts"), list)):
+            motion = [float(value) for value in data["motion"]]
+            energy = [float(value) for value in data["audio_energy"]]
+            cuts = [float(value) for value in data["scene_cuts"]]
+            if all(math.isfinite(value) for value in motion + energy + cuts):
+                data.update(motion=motion, audio_energy=energy, scene_cuts=cuts)
+                return data
+    except (OSError, json.JSONDecodeError, AttributeError, TypeError, ValueError, OverflowError):
+        pass
+    return None
+
+
+def _write_analysis_cache(path: Path, data: dict):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_suffix(path.suffix + ".tmp")
+    temporary.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+    temporary.replace(path)
+
+
 def transcribe(path: Path, has_audio: bool, model_size: str, cache: Path, cancel: threading.Event,
                progress: Callable[[str], None] | None = None, model_manager: ModelManager | None = None,
                audio_seconds: float | None = None, language: str | None = None) -> TranscriptionResult:
@@ -273,61 +310,365 @@ def transcribe(path: Path, has_audio: bool, model_size: str, cache: Path, cancel
     return result
 
 
-def _normalize(values: list[float]) -> list[float]:
-    if not values:
-        return []
-    low, high = min(values), max(values)
-    if high - low < 1e-9:
+def _robust_normalize(values: list[float]) -> list[float]:
+    numeric = []
+    for value in values:
+        try:
+            number = float(value)
+        except (TypeError, ValueError):
+            number = 0.0
+        numeric.append(number if math.isfinite(number) else 0.0)
+    clean = sorted(numeric)
+    if not clean:
         return [0.0] * len(values)
-    return [(v - low) / (high - low) for v in values]
+    low = clean[int((len(clean) - 1) * 0.1)]
+    high = clean[int((len(clean) - 1) * 0.9)]
+    if high <= low:
+        high = clean[-1]
+    if high <= low:
+        return [0.0] * len(values)
+    return [max(0.0, min(1.0, (value - low) / (high - low))) for value in numeric]
 
 
-def rank_clips(duration: float, motion: list[float], audio: list[float], cuts: list[float], words: list[Word], count: int = 5, min_length: int = 20, max_length: int = 55) -> list[dict]:
-    min_length = max(1, int(min_length))
-    max_length = max(min_length, int(max_length))
-    length = min(max_length, duration)
-    if length < min_length:
-        length = duration
-    if length <= 0:
+def _valid_words(words: list[Word], duration: float | None = None) -> list[Word]:
+    valid = []
+    for word in words:
+        try:
+            start, end, text = float(word.start), float(word.end), str(word.text)
+        except (AttributeError, TypeError, ValueError):
+            continue
+        if not math.isfinite(start) or not math.isfinite(end) or end <= start or start < 0 or (duration is not None and end > duration):
+            continue
+        valid.append(Word(start, end, text))
+    return sorted(valid, key=lambda word: word.start)
+
+
+def detect_activity_regions(duration: float, motion: list[float], audio: list[float], words: list[Word],
+                           gap_tolerance: int = 2) -> list[dict]:
+    """Find sustained activity using normalized visual, audio, and speech signals."""
+    bins = max(1, math.ceil(duration))
+    visual = _robust_normalize((motion + [0.0] * bins)[:bins])
+    sound = _robust_normalize((audio + [0.0] * bins)[:bins])
+    speech = [0.0] * bins
+    for word in words:
+        index = int(word.start)
+        if 0 <= index < bins:
+            speech[index] += 1.0
+    speech = _robust_normalize(speech)
+    activity = [max(0.48 * visual[i], 0.65 * sound[i], 0.25 * speech[i]) for i in range(bins)]
+    active = [i for i, value in enumerate(activity) if value >= 0.34]
+    if not active:
         return []
-    nm, na = _normalize(motion), _normalize(audio)
-    step = 5.0
-    candidates = []
-    latest = max(0.0, duration - length)
-    starts = [i * step for i in range(math.ceil(latest / step) + 1)] or [0.0]
-    if starts[-1] < latest:
-        starts.append(latest)
-    for start in starts:
-        end = min(duration, start + length)
-        a, b = max(0, int(start)), max(1, math.ceil(end))
-        m = sum(nm[a:min(b, len(nm))]) / max(1, min(b, len(nm)) - a)
-        e = sum(na[a:min(b, len(na))]) / max(1, min(b, len(na)) - a)
-        cut_score = min(1.0, sum(start < c < end for c in cuts) / max(1, length / 12))
-        speech = sum(start <= w.start < end for w in words) / max(1, length * 2)
-        score = 0.38 * m + 0.30 * e + 0.18 * min(1, speech) + 0.14 * cut_score
-        candidates.append({"start": start, "end": end, "score": round(score, 4), "signals": {"motion": round(m, 3), "audio_energy": round(e, 3), "speech_density": round(min(1, speech), 3), "scene_changes": round(cut_score, 3)}})
-    selected = []
-    for _ in range(min(count, len(candidates))):
-        def rank(candidate: dict) -> float:
-            center = (candidate["start"] + candidate["end"]) / 2
-            nearest = min((abs(center - (s["start"] + s["end"]) / 2) for s in selected), default=duration)
-            return candidate["score"] * (0.4 + 0.6 * min(1, nearest / max(1, duration / 4)))
-        remaining = [c for c in candidates if c not in selected]
-        spaced = [c for c in remaining if all(min(c["end"], s["end"]) - max(c["start"], s["start"]) <= length * 0.5 for s in selected)]
-        best = max(spaced or remaining, key=rank)
-        selected.append(best)
-    selected.sort(key=lambda c: c["start"])
-    for c in selected:
-        original_start, original_end = c["start"], c["end"]
-        nearby = [w for w in words if c["start"] <= w.start < c["end"]]
-        if nearby:
-            c["start"] = max(0, max((w.end for w in words if c["start"] - 1.5 <= w.end <= c["start"]), default=c["start"]))
-            c["end"] = min(duration, min((w.start for w in words if c["end"] <= w.start <= c["end"] + 1.5), default=c["end"]))
-        if not 0 <= c["start"] < c["end"] <= duration or c["end"] - c["start"] > max_length:
-            c["start"], c["end"] = original_start, original_end
-        reasons = [name.replace("_", " ") for name, val in c["signals"].items() if val >= 0.35]
-        c["reason"] = "Strong " + (", ".join(reasons) if reasons else "combined audio and visual activity")
-    return selected
+    groups, group = [], [active[0]]
+    for index in active[1:]:
+        if index - group[-1] <= gap_tolerance + 1:
+            group.append(index)
+        else:
+            groups.append(group)
+            group = [index]
+    groups.append(group)
+    return [{"start": float(group[0]), "end": min(duration, float(group[-1] + 1)),
+             "peak_activity": round(max(activity[i] for i in group), 3),
+             "motion": round(max(visual[i] for i in group), 3),
+             "audio": round(max(sound[i] for i in group), 3)}
+            for group in groups if group[-1] - group[0] >= 1 or max(activity[i] for i in group) >= 0.6]
+
+
+def extract_speech_regions(words: list[Word], max_pause: float = 1.15) -> list[dict]:
+    """Group timestamped words into sentence/pause-delimited dialogue units."""
+    valid = _valid_words(words)
+    units, current = [], []
+    for word in valid:
+        boundary = current and (word.start - current[-1].end > max_pause or current[-1].text.rstrip().endswith((".", "?", "!")))
+        if boundary:
+            units.append(current)
+            current = []
+        current.append(word)
+    if current:
+        units.append(current)
+    return [{"start": float(unit[0].start), "end": float(unit[-1].end),
+             "word_count": len(unit), "complete_sentence": unit[-1].text.rstrip().endswith((".", "?", "!"))}
+            for unit in units]
+
+
+def _interval_iou(first: dict, second: dict) -> float:
+    intersection = max(0.0, min(first["end"], second["end"]) - max(first["start"], second["start"]))
+    union = max(first["end"], second["end"]) - min(first["start"], second["start"])
+    return intersection / union if union else 0.0
+
+
+def generate_candidates(duration: float, motion: list[float], audio: list[float], cuts: list[float], words: list[Word],
+                        min_length: int = 20, max_length: int = 55,
+                        cancel: threading.Event | None = None) -> dict:
+    """Propose scene, sustained-activity, and dialogue intervals independently of scoring."""
+    minimum, maximum = max(1.0, float(min_length)), max(float(min_length), float(max_length))
+    result = {"candidates": [], "rejections": [], "activity_regions": [], "speech_regions": [],
+              "short_source_policy": "none"}
+    if duration <= 0:
+        result["short_source_policy"] = "skip_invalid_duration"
+        return result
+    if duration < minimum:
+        result["short_source_policy"] = "skip_below_minimum"
+        result["rejections"].append({"reason": "source shorter than configured minimum", "duration": duration})
+        return result
+    words = _valid_words(words, duration)
+
+    proposals: dict[tuple[int, int], dict] = {}
+    def add(start: float, end: float, source: str, scene_edges: tuple[bool, bool] = (False, False)):
+        start, end = max(0.0, float(start)), min(duration, float(end))
+        if end <= start or end - start < minimum - 0.01 or end - start > maximum + 0.01:
+            result["rejections"].append({"start": round(start, 3), "end": round(end, 3), "source": source,
+                                         "reason": "outside configured duration"})
+            return
+        key = (round(start * 4), round(end * 4))
+        candidate = proposals.setdefault(key, {"start": start, "end": end, "original_start": start,
+                                                "original_end": end, "sources": [], "scene_edges": [False, False]})
+        if source not in candidate["sources"]:
+            candidate["sources"].append(source)
+        candidate["scene_edges"] = [a or b for a, b in zip(candidate["scene_edges"], scene_edges)]
+
+    target_durations = sorted({minimum, min(maximum, minimum + 5), min(maximum, 30.0),
+                               min(maximum, 40.0), min(maximum, 45.0), maximum})
+    # Snap a small set of requested window sizes to scene ends instead of enumerating every cut pair.
+    boundaries = [0.0] + sorted({float(c) for c in cuts if 0 < c < duration}) + [float(duration)]
+    for left in range(len(boundaries) - 1):
+        if cancel and cancel.is_set():
+            raise InterruptedError("Processing cancelled")
+        for target in target_durations:
+            target_time = boundaries[left] + target
+            position = bisect_left(boundaries, target_time, left + 1)
+            options = [index for index in (position - 1, position) if left < index < len(boundaries)
+                       and minimum <= boundaries[index] - boundaries[left] <= maximum]
+            if options:
+                right = min(options, key=lambda index: abs((boundaries[index] - boundaries[left]) - target))
+                add(boundaries[left], boundaries[right], "scene", (left > 0, right < len(boundaries) - 1))
+
+    activity = detect_activity_regions(duration, motion, audio, words)
+    result["activity_regions"] = activity
+    for region in activity:
+        if cancel and cancel.is_set():
+            raise InterruptedError("Processing cancelled")
+        center = (region["start"] + region["end"]) / 2
+        for length in target_durations:
+            start = max(0.0, min(duration - length, center - length / 2))
+            add(start, start + length, "activity")
+
+    dialogue = extract_speech_regions(words)
+    result["speech_regions"] = dialogue
+    # Accumulate adjacent speech units into complete, context-preserving dialogue candidates.
+    for index, unit in enumerate(dialogue):
+        if cancel and cancel.is_set():
+            raise InterruptedError("Processing cancelled")
+        end_index = index
+        while end_index < len(dialogue):
+            phrase_end = dialogue[end_index]["end"]
+            raw_start = max(0.0, unit["start"] - 2.5)
+            raw_end = min(duration, phrase_end + 2.5)
+            if raw_end - raw_start > maximum:
+                break
+            if raw_end - raw_start >= minimum:
+                add(raw_start, raw_end, "speech")
+                break
+            end_index += 1
+
+    result["candidates"] = list(proposals.values())
+    result["candidate_count"] = len(result["candidates"])
+    return result
+
+
+def refine_clip_boundaries(candidate: dict, duration: float, words: list[Word], cuts: list[float],
+                           min_length: int, max_length: int, context_margin: float = 2.5,
+                           speech_regions: list[dict] | None = None) -> dict:
+    """Snap near sentence, word, or scene edges without crossing clip-duration limits."""
+    start, end = candidate["start"], candidate["end"]
+    original = (start, end)
+    units = speech_regions if speech_regions is not None else extract_speech_regions(words)
+    start_unit = next((u for u in units if u["start"] <= start < u["end"] and start - u["start"] <= context_margin), None)
+    end_unit = next((u for u in units if u["start"] < end < u["end"] and u["end"] - end <= context_margin), None)
+    if start_unit:
+        start = start_unit["start"]
+    if end_unit:
+        end = end_unit["end"]
+    if not start_unit:
+        nearest = min((c for c in cuts if abs(c - start) <= 1.25), key=lambda c: abs(c - start), default=None)
+        if nearest is not None and not any(w.start < nearest < w.end for w in words):
+            start = nearest
+    if not end_unit:
+        nearest = min((c for c in cuts if abs(c - end) <= 1.25), key=lambda c: abs(c - end), default=None)
+        if nearest is not None and not any(w.start < nearest < w.end for w in words):
+            end = nearest
+    def snap_to_words(left: float, right: float) -> tuple[float, float]:
+        for word in words:
+            if word.start < left < word.end:
+                left = word.start
+            if word.start < right < word.end:
+                right = word.end
+        return left, right
+    start, end = snap_to_words(start, end)
+    start, end = max(0.0, start), min(duration, end)
+    if end - start > max_length:
+        end = start + max_length
+        for word in words:
+            if word.start < end < word.end:
+                end = word.start
+                break
+    boundary_valid = min_length <= end - start <= max_length and end > start
+    if not boundary_valid:
+        start, end = snap_to_words(*original)
+        start, end = max(0.0, start), min(duration, end)
+        boundary_valid = min_length <= end - start <= max_length and end > start
+    updated = dict(candidate)
+    updated.update(start=round(start, 3), end=round(end, 3), duration=round(end - start, 3),
+                   boundary_refinement={"original_start": round(original[0], 3), "original_end": round(original[1], 3),
+                                        "start_changed": round(start, 3) != round(original[0], 3),
+                                        "end_changed": round(end, 3) != round(original[1], 3),
+                                        "context_margin_seconds": context_margin},
+                   boundary_valid=boundary_valid)
+    aligned_start = any(abs(start - unit["start"]) < 0.01 for unit in units) or any(abs(start - c) < 0.01 for c in cuts)
+    aligned_end = any(abs(end - unit["end"]) < 0.01 for unit in units) or any(abs(end - c) < 0.01 for c in cuts)
+    updated["boundary_confidence"] = round((0.5 + 0.25 * aligned_start + 0.25 * aligned_end), 2)
+    return updated
+
+
+def _candidate_features(candidate: dict, visual: list[float], sound: list[float],
+                        words: list[Word], cuts: list[float], units: list[dict]) -> dict:
+    start, end = candidate["start"], candidate["end"]
+    bins = len(visual)
+    left, right = max(0, int(start)), min(bins, math.ceil(end))
+    count = max(1, right - left)
+    m, a = visual[left:right], sound[left:right]
+    average_motion = sum(m) / count if m else 0.0
+    average_audio = sum(a) / count if a else 0.0
+    speech_count = sum(start <= word.start < end for word in words)
+    speech_density = min(1.0, speech_count / max(1.0, (end - start) * 0.7))
+    speech_seconds = {int(word.start) for word in words if start <= word.start < end}
+    complete_units = [u for u in units if u["start"] < end and u["end"] > start]
+    complete_ratio = (sum(u["start"] >= start and u["end"] <= end for u in complete_units) / len(complete_units)) if complete_units else 0.0
+    internal = [c for c in cuts if start < c < end]
+    edge_quality = min(1.0, sum(min(abs(start-c), abs(end-c)) <= 1.5 for c in cuts) / 2.0)
+    if "scene" in candidate["sources"]:
+        edge_quality = max(edge_quality, 0.55)
+    motion_consistency = sum(value >= 0.3 for value in m) / count if m else 0.0
+    audio_variation = min(1.0, (max(a) - min(a)) if len(a) > 1 else 0.0)
+    still_silence = sum(visual[i] < 0.12 and sound[i] < 0.12 and i not in speech_seconds
+                        for i in range(left, min(right, len(visual)))) / count
+    static_interval = sum(m[index] < 0.12 and index not in speech_seconds for index in range(len(m))) / count if m else 1.0
+    return {"average_motion": round(average_motion, 3), "peak_motion": round(max(m, default=0.0), 3),
+            "motion_consistency": round(motion_consistency, 3), "average_audio_energy": round(average_audio, 3),
+            "audio_energy_variation": round(audio_variation, 3), "speech_density": round(speech_density, 3),
+            "dialogue_completeness": round(complete_ratio, 3), "scene_transition_quality": round(edge_quality, 3),
+            "excessive_silence": round(still_silence, 3), "static_interval": round(static_interval, 3),
+            "scene_changes": len(internal)}
+
+
+def rank_candidates(candidates: list[dict], duration: float, motion: list[float], audio: list[float],
+                    cuts: list[float], words: list[Word], min_length: int, max_length: int,
+                    context_margin: float = 2.5, weights: dict | None = None,
+                    cancel: threading.Event | None = None) -> list[dict]:
+    ranked = []
+    weights = weights or CANDIDATE_SCORE_WEIGHTS
+    words = _valid_words(words, duration)
+    bins = max(1, math.ceil(duration))
+    visual = _robust_normalize((motion + [0.0] * bins)[:bins])
+    sound = _robust_normalize((audio + [0.0] * bins)[:bins])
+    units = extract_speech_regions(words)
+    for candidate in candidates:
+        if cancel and cancel.is_set():
+            raise InterruptedError("Processing cancelled")
+        refined = refine_clip_boundaries(candidate, duration, words, cuts, min_length, max_length,
+                                         context_margin=context_margin, speech_regions=units)
+        features = _candidate_features(refined, visual, sound, words, cuts, units)
+        positive = sum(weights[name] * (refined["boundary_confidence"] if name == "boundary_confidence" else features[name])
+                       for name in weights)
+        score = max(0.0, min(1.0, positive - sum(CANDIDATE_SCORE_PENALTIES[name] * features[name]
+                                                 for name in CANDIDATE_SCORE_PENALTIES)))
+        ranked.append({**refined, "feature_scores": features, "score": round(score, 4)})
+    return ranked
+
+
+def deduplicate_candidates(candidates: list[dict], iou_threshold: float = 0.35,
+                           cancel: threading.Event | None = None) -> tuple[list[dict], list[dict]]:
+    kept, rejected = [], []
+    for candidate in sorted(candidates, key=lambda item: item["score"], reverse=True):
+        if cancel and cancel.is_set():
+            raise InterruptedError("Processing cancelled")
+        duplicate = next((prior for prior in kept if _interval_iou(candidate, prior) > iou_threshold), None)
+        if duplicate:
+            rejected.append({"start": candidate["start"], "end": candidate["end"], "reason": "overlap duplicate",
+                             "duplicate_of": [duplicate["start"], duplicate["end"]], "iou": round(_interval_iou(candidate, duplicate), 3)})
+        else:
+            kept.append(candidate)
+    return kept, rejected
+
+
+def select_diverse_candidates(candidates: list[dict], count: int, duration: float,
+                              minimum_distance: float = 5.0, minimum_score: float = 0.075,
+                              cancel: threading.Event | None = None) -> tuple[list[dict], list[dict]]:
+    selected, rejected = [], []
+    remaining = [c for c in candidates if c.get("boundary_valid", True) and c["score"] >= minimum_score]
+    rejected.extend({"start": c["start"], "end": c["end"], "reason": "invalid refined boundary"}
+                    for c in candidates if not c.get("boundary_valid", True))
+    rejected.extend({"start": c["start"], "end": c["end"], "reason": "below minimum quality score", "score": c["score"]}
+                    for c in candidates if c.get("boundary_valid", True) and c["score"] < minimum_score)
+    while remaining and len(selected) < count:
+        if cancel and cancel.is_set():
+            raise InterruptedError("Processing cancelled")
+        def diversity_score(item):
+            center = (item["start"] + item["end"]) / 2
+            distance = min((abs(center - (clip["start"] + clip["end"]) / 2) for clip in selected), default=duration)
+            return item["score"] * (0.7 + 0.3 * min(1.0, distance / max(1.0, duration / 4)))
+        remaining.sort(key=diversity_score, reverse=True)
+        candidate = remaining.pop(0)
+        conflict = next((prior for prior in selected if _interval_iou(candidate, prior) > 0.35 or
+                         (candidate["start"] >= prior["end"] and candidate["start"] - prior["end"] < minimum_distance) or
+                         (prior["start"] >= candidate["end"] and prior["start"] - candidate["end"] < minimum_distance)), None)
+        if conflict:
+            rejected.append({"start": candidate["start"], "end": candidate["end"], "reason": "duplicate or too close",
+                             "duplicate_of": [conflict["start"], conflict["end"]]})
+        else:
+            selected.append(candidate)
+    for candidate in remaining:
+        rejected.append({"start": candidate["start"], "end": candidate["end"], "reason": "clip count reached"})
+    for candidate in selected:
+        features = candidate["feature_scores"]
+        signals = [(features["average_motion"], "high visual motion with sustained activity"),
+                   (features["average_audio_energy"], "strong audio event with scene continuity"
+                    if features.get("scene_transition_quality", 0.0) >= 0.5 else "sustained audio energy"),
+                   (features["speech_density"] * features["dialogue_completeness"], "dialogue segment with complete speech units")]
+        reason_score, reason = max(signals, key=lambda item: item[0])
+        candidate["reason"] = reason if reason_score >= 0.15 else "combined activity signals"
+        candidate["selected"] = True
+    return sorted(selected, key=lambda item: item["start"]), rejected
+
+
+def select_clips(duration: float, motion: list[float], audio: list[float], cuts: list[float], words: list[Word],
+                 count: int = 5, min_length: int = 20, max_length: int = 55,
+                 minimum_distance: float = 5.0, context_margin: float = 2.5,
+                 scoring_weights: dict | None = None, cancel: threading.Event | None = None) -> dict:
+    generated = generate_candidates(duration, motion, audio, cuts, words, min_length, max_length, cancel)
+    candidates = rank_candidates(generated["candidates"], duration, motion, audio, cuts, words,
+                                 min_length, max_length, context_margin, scoring_weights, cancel)
+    unique, duplicate_rejections = deduplicate_candidates(candidates, cancel=cancel)
+    selected, selection_rejections = select_diverse_candidates(unique, count, duration, minimum_distance, cancel=cancel)
+    selected_ids = {id(candidate) for candidate in selected}
+    for candidate in candidates:
+        candidate["selected"] = id(candidate) in selected_ids
+    generated["candidate_count"] = len(generated["candidates"])
+    generated["candidates"] = candidates
+    generated["selected"] = selected
+    generated["rejections"].extend(duplicate_rejections)
+    generated["rejections"].extend(selection_rejections)
+    generated["rejected_count"] = len(generated["rejections"])
+    return generated
+
+
+def rank_clips(duration: float, motion: list[float], audio: list[float], cuts: list[float], words: list[Word],
+               count: int = 5, min_length: int = 20, max_length: int = 55,
+               minimum_distance: float = 5.0, context_margin: float = 2.5,
+               scoring_weights: dict | None = None) -> list[dict]:
+    """Compatibility wrapper: return selected variable-duration clips only."""
+    return select_clips(duration, motion, audio, cuts, words, count, min_length, max_length,
+                        minimum_distance, context_margin, scoring_weights)["selected"]
 
 
 def _ass_text(words: list[Word], start: float, end: float) -> str:
@@ -511,25 +852,71 @@ def process_video(path: Path, output_root: Path, model_size: str, clip_count: in
     folder.mkdir(parents=True, exist_ok=True)
     manifest_path = folder / "analysis.json"
     cache = folder / "transcription.json"
+    analysis_cache_path = folder / "analysis_cache.json"
     progress(f"Analyzing {path.name}: {info.width}×{info.height}, {info.duration:.0f}s")
     source_stat = path.stat()
-    settings = {"model": model_size, "clip_count": clip_count, "min_length": min_length, "max_length": max_length, "encoder": encoder}
+    settings = {"model": model_size, "clip_count": clip_count, "min_length": min_length, "max_length": max_length,
+                "encoder": encoder, "candidate_engine": "scene-aware-variable-v1"}
     if manifest_path.exists():
-        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-        files_valid = bool(manifest.get("clips")) and all((folder / c.get("filename", "")).is_file() for c in manifest["clips"])
+        try:
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            manifest = {}
+        if not isinstance(manifest, dict):
+            manifest = {}
+        existing_clips = manifest.get("clips", [])
+        files_valid = isinstance(existing_clips, list) and bool(existing_clips) and all(
+            isinstance(c, dict) and isinstance(c.get("filename"), str) and bool(c["filename"]) and
+            (folder / c["filename"]).is_file() for c in existing_clips)
         source_valid = manifest.get("source_size") == source_stat.st_size and manifest.get("source_mtime_ns") == source_stat.st_mtime_ns
-        if files_valid and source_valid and manifest.get("settings") == settings and len(manifest["clips"]) == clip_count:
+        selection_report = manifest.get("candidate_selection")
+        complete_empty = isinstance(selection_report, dict) and selection_report.get("selected_count") == 0
+        if (files_valid or complete_empty) and source_valid and manifest.get("settings") == settings:
             progress(f"Already completed; skipping {path.name}")
             return 0
-    try:
-        energy = _audio_energy(path, info.duration, cancel) if info.has_audio else [0.0] * max(1, math.ceil(info.duration))
-    except InterruptedError:
-        raise
-    except Exception as exc:
-        progress(f"Audio analysis skipped for {path.name}: {exc}")
-        energy = [0.0] * max(1, math.ceil(info.duration))
-    motion = _motion(path, info.duration, cancel)
-    cuts, scene_status = _scene_cuts(path)
+    if info.duration < min_length:
+        manifest = {"source": path.name, "source_path": str(path), "source_size": source_stat.st_size,
+                    "source_mtime_ns": source_stat.st_mtime_ns, "settings": settings, "source_duration": info.duration,
+                    "metadata": asdict(info), "clips": [], "output_resolution": "1080x1920",
+                    "candidate_selection": {"candidate_count": 0, "rejected_count": 1, "selected_count": 0,
+                                            "short_source_policy": "skip_below_minimum",
+                                            "short_source_reason": f"Source duration {info.duration:.3f}s is below the configured minimum of {min_length}s.",
+                                            "candidates": [], "rejections": [{"reason": "source shorter than configured minimum"}]}}
+        manifest_path.write_text(json.dumps(manifest, indent=2, ensure_ascii=False), encoding="utf-8")
+        progress(f"Skipped {path.name}: {info.duration:.1f}s is shorter than the {min_length}s minimum")
+        return 0
+    fingerprint = _analysis_fingerprint(path, source_stat)
+    cached_analysis = _read_analysis_cache(analysis_cache_path, fingerprint)
+    if cached_analysis:
+        motion = cached_analysis["motion"]
+        energy = cached_analysis["audio_energy"]
+        cuts = cached_analysis["scene_cuts"]
+        scene_status = cached_analysis["scene_detection_status"]
+        analysis_cache_status = "reused"
+    else:
+        try:
+            energy = _audio_energy(path, info.duration, cancel) if info.has_audio else [0.0] * max(1, math.ceil(info.duration))
+            audio_analysis_valid = True
+        except InterruptedError:
+            raise
+        except Exception as exc:
+            progress(f"Audio analysis skipped for {path.name}: {exc}")
+            energy = [0.0] * max(1, math.ceil(info.duration))
+            audio_analysis_valid = False
+        motion = _motion(path, info.duration, cancel)
+        if cancel.is_set():
+            raise InterruptedError("Processing cancelled")
+        cuts, scene_status = _scene_cuts(path)
+        if cancel.is_set():
+            raise InterruptedError("Processing cancelled")
+        analysis_cache_status = "created"
+        if audio_analysis_valid and "failed" not in scene_status and "unavailable" not in scene_status:
+            _write_analysis_cache(analysis_cache_path, {"schema": 1, "fingerprint": fingerprint, "motion": motion,
+                                                        "audio_energy": energy, "scene_cuts": cuts,
+                                                        "scene_detection_status": scene_status})
+        else:
+            analysis_cache_status = "not cached because an analysis stage reported a failure"
+    progress(f"Analysis signals · {analysis_cache_status}")
     progress(f"Scene detection: {scene_status}")
     progress(f"Transcribing {path.name}" if info.has_audio else f"No audio track in {path.name}")
     transcript = transcribe(path, info.has_audio, model_size, cache, cancel, progress, model_manager, info.duration)
@@ -542,7 +929,10 @@ def process_video(path: Path, output_root: Path, model_size: str, clip_count: in
         progress(f"Transcription unavailable: {transcript.message}")
     else:
         progress(f"Transcription {transcript.status} · {transcript.device}/{transcript.precision} · {len(words)} words")
-    clips = rank_clips(info.duration, motion, energy, cuts, words, clip_count, min_length, max_length)
+    selection = select_clips(info.duration, motion, energy, cuts, words, clip_count, min_length, max_length, cancel=cancel)
+    clips = selection["selected"]
+    durations = ", ".join(f"{clip['duration']:.0f}s" for clip in clips) or "none"
+    progress(f"Candidates · {selection['candidate_count']} generated, {len(clips)} selected · {durations}")
     report_clips = []
     for i, clip in enumerate(clips, 1):
         if cancel.is_set():
@@ -552,6 +942,10 @@ def process_video(path: Path, output_root: Path, model_size: str, clip_count: in
         render_info = render(path, folder / filename, info, clip, words, info.has_audio, cancel, encoder)
         progress(f"Encoded with {render_info['encoder']} · {render_info['encoder_note']}")
         report_clips.append({"filename": filename, **clip, "duration": round(clip["end"] - clip["start"], 3), "category": "mixed activity", "status": "completed", "render": render_info})
-    manifest = {"source": path.name, "source_path": str(path), "source_size": source_stat.st_size, "source_mtime_ns": source_stat.st_mtime_ns, "settings": settings, "source_duration": info.duration, "metadata": asdict(info), "language": transcript.language, "output_resolution": "1080x1920", "clips": report_clips, "scene_cuts": cuts, "scene_detection_status": scene_status, "transcription_words": len(words), "transcription_available": bool(words), "transcription_status": transcript.status, "transcription_outcome": transcript.outcome, "transcription_model": transcript.model, "transcription_device": transcript.device, "transcription_precision": transcript.precision, "transcription_message": transcript.message, "transcription_initialization_seconds": transcript.initialization_seconds, "transcription_seconds": transcript.transcription_seconds, "transcription_audio_seconds": transcript.audio_seconds, "transcription_rtf": transcript.real_time_factor, "transcription_vram_before": transcript.vram_before, "transcription_vram_after": transcript.vram_after, "transcription_peak_vram": transcript.peak_vram}
+    candidate_report = {"candidate_count": selection["candidate_count"], "rejected_count": selection["rejected_count"],
+                        "selected_count": len(clips), "short_source_policy": selection["short_source_policy"],
+                        "activity_regions": selection["activity_regions"], "speech_regions": selection["speech_regions"],
+                        "candidates": selection["candidates"], "rejections": selection["rejections"]}
+    manifest = {"source": path.name, "source_path": str(path), "source_size": source_stat.st_size, "source_mtime_ns": source_stat.st_mtime_ns, "settings": settings, "source_duration": info.duration, "metadata": asdict(info), "language": transcript.language, "output_resolution": "1080x1920", "clips": report_clips, "candidate_selection": candidate_report, "analysis_cache_status": analysis_cache_status, "scene_cuts": cuts, "scene_detection_status": scene_status, "transcription_words": len(words), "transcription_available": bool(words), "transcription_status": transcript.status, "transcription_outcome": transcript.outcome, "transcription_model": transcript.model, "transcription_device": transcript.device, "transcription_precision": transcript.precision, "transcription_message": transcript.message, "transcription_initialization_seconds": transcript.initialization_seconds, "transcription_seconds": transcript.transcription_seconds, "transcription_audio_seconds": transcript.audio_seconds, "transcription_rtf": transcript.real_time_factor, "transcription_vram_before": transcript.vram_before, "transcription_vram_after": transcript.vram_after, "transcription_peak_vram": transcript.peak_vram}
     manifest_path.write_text(json.dumps(manifest, indent=2, ensure_ascii=False), encoding="utf-8")
     return len(report_clips)
