@@ -94,7 +94,9 @@ def assess_candidate(endpoint: str, model: str, words: list, start: float, end: 
               "self_containment,visual_clarity,audio_clarity: each 0..5), confidence 0..1, first_word_index, "
               "last_word_index, hook, build, payoff, rejection_reasons. Use UNCERTAIN if evidence is weak. "
               "A cliffhanger can have intentional unresolved payoff. Do not inflate scores. "
-              f"Language: {language or 'unknown'}. Candidate {start:.3f}-{end:.3f}s. "
+              f"Language: {language or 'unknown'}. User content type preference: {os.getenv('CLIPPER_CONTENT_TYPE', 'Auto')}. "
+              f"Highlight preference: {os.getenv('CLIPPER_HIGHLIGHT_PREFERENCE', 'Auto')} (guide, never force a category). "
+              f"Candidate {start:.3f}-{end:.3f}s. "
               f"Overlapping transcript-window metadata: {json.dumps(windows, ensure_ascii=False)}\n{transcript}")
     body = json.dumps({"model": model, "temperature": 0, "messages": [{"role": "user", "content": prompt}],
                        "response_format": {"type": "json_object"}}).encode()

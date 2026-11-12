@@ -58,8 +58,8 @@ class ClippingApp(tk.Tk):
     def __init__(self):
         super().__init__()
         self.title("AI Video Clipping Factory")
-        self.geometry("760x620")
-        self.minsize(680, 520)
+        self.geometry("1020x900")
+        self.minsize(820, 700)
         self.configure(bg="#10141d")
         preferences = _read_json(PREFERENCES)
         if not isinstance(preferences, dict):
@@ -77,7 +77,10 @@ class ClippingApp(tk.Tk):
         self.single_file = tk.StringVar(value="")
         self.latest_output: Path | None = None
         self.caption_style = tk.StringVar(value=preferences.get("caption_style", "bold_pop"))
-        self.caption_placement = tk.StringVar(value=preferences.get("caption_placement", "lower"))
+        self.caption_placement = tk.StringVar(value=preferences.get("caption_placement", "auto"))
+        self.content_type = tk.StringVar(value=preferences.get("content_type", "Auto"))
+        self.highlight_preference = tk.StringVar(value=preferences.get("highlight_preference", "Auto"))
+        self.length_profile = tk.StringVar(value=preferences.get("length_profile", "Auto"))
         self.editorial_endpoint = tk.StringVar(value=preferences.get("editorial_endpoint", os.getenv("CLIPPER_LOCAL_LLM_ENDPOINT", "")))
         self.editorial_model = tk.StringVar(value=preferences.get("editorial_model", os.getenv("CLIPPER_LOCAL_LLM_MODEL", "")))
         self.editorial_status = tk.StringVar(value=self._editorial_status_text())
@@ -151,11 +154,19 @@ class ClippingApp(tk.Tk):
         ttk.Label(captions, text="Style", style="Sub.TLabel").pack(side="left")
         ttk.Combobox(captions, textvariable=self.caption_style, values=("bold_pop", "karaoke", "cinematic_minimal", "boxed"), width=18, state="readonly").pack(side="left", padx=(5, 12))
         ttk.Label(captions, text="Placement", style="Sub.TLabel").pack(side="left")
-        ttk.Combobox(captions, textvariable=self.caption_placement, values=("lower", "middle", "upper"), width=11, state="readonly").pack(side="left", padx=(5, 12))
+        ttk.Combobox(captions, textvariable=self.caption_placement, values=("auto", "lower", "middle", "upper"), width=11, state="readonly").pack(side="left", padx=(5, 12))
         ttk.Label(captions, text="Local endpoint/model", style="Sub.TLabel").pack(side="left")
         ttk.Entry(captions, textvariable=self.editorial_endpoint, width=24).pack(side="left", padx=(5, 4))
         ttk.Entry(captions, textvariable=self.editorial_model, width=12).pack(side="left")
         ttk.Label(root, textvariable=self.editorial_status, style="Sub.TLabel").pack(anchor="w", pady=(0, 8))
+        content = ttk.LabelFrame(root, text=" Content preferences ", padding=(12, 7))
+        content.pack(fill="x", pady=(0, 10))
+        for label, variable, values, width in (
+                ("Type", self.content_type, ("Auto", "Anime/Animation", "Live Action", "Mixed"), 17),
+                ("Highlight", self.highlight_preference, ("Auto", "Comedy", "Action", "Drama", "Suspense", "Emotional", "Other"), 13),
+                ("Length", self.length_profile, ("Auto", "Short", "Standard", "Story"), 11)):
+            ttk.Label(content, text=label, style="Sub.TLabel").pack(side="left")
+            ttk.Combobox(content, textvariable=variable, values=values, width=width, state="readonly").pack(side="left", padx=(5, 14))
         nightly = ttk.LabelFrame(root, text=" Nightly queue ", padding=(12, 7))
         nightly.pack(fill="x", pady=(0, 12))
         for label, variable, upper in (("Shorts this session", self.target, 10), ("Max hours", self.max_hours, 24), ("Microbatch", self.batch_size, 4)):
@@ -199,8 +210,31 @@ class ClippingApp(tk.Tk):
         encoders = self.diagnostics.get("encoders", {})
         render = "NVENC verified" if encoders.get("h264_nvenc") else "libx264 verified" if encoders.get("libx264") else "H.264 encoder unavailable"
         ttk.Label(root, text=f"Runtime · {gpu}{memory} · {cuda} · {render}", style="Sub.TLabel").pack(anchor="w", pady=(0, 8))
+        review = ttk.LabelFrame(root, text=" Clip review ", padding=(10, 6))
+        review.pack(fill="x", pady=(0, 8))
+        review_body = ttk.Frame(review)
+        review_body.pack(fill="x")
+        columns = ("clip", "category", "source_time", "duration", "score", "composition", "caption", "validation")
+        self.review_tree = ttk.Treeview(review_body, columns=columns, show="headings", height=4, selectmode="browse")
+        for column, title, width in zip(columns,
+                ("Clip", "Category", "Source time", "Duration", "Score", "Composition", "Caption", "Status"),
+                (90, 110, 130, 70, 65, 140, 100, 95)):
+            self.review_tree.heading(column, text=title)
+            self.review_tree.column(column, width=width, minwidth=50, stretch=column in {"category", "composition"})
+        self.review_tree.pack(side="left", fill="x", expand=True)
+        self.review_tree.bind("<<TreeviewSelect>>", self._review_selected)
+        self.review_image_label = ttk.Label(review_body, text="Select a clip", anchor="center", width=25)
+        self.review_image_label.pack(side="right", padx=(10, 0))
+        self.review_image = None
+        self.review_items = {}
+        actions = ttk.Frame(review)
+        actions.pack(fill="x", pady=(5, 0))
+        for label, callback in (("Play MP4", self._play_review_clip), ("Reveal Folder", self._reveal_review_clip),
+                                ("Open SRT", self._open_review_srt), ("View Analysis", self._open_review_analysis),
+                                ("Contact Sheet", self._open_review_contact_sheet), ("Reframe Debug", self._open_review_debug)):
+            ttk.Button(actions, text=label, command=callback).pack(side="left", padx=(0, 6))
         ttk.Label(root, text="Processing log", style="Sub.TLabel").pack(anchor="w")
-        self.log = tk.Text(root, bg="#0b0e14", fg="#c9d3e2", insertbackground="white", relief="flat", font=("Cascadia Mono", 9), wrap="word", height=14, state="disabled")
+        self.log = tk.Text(root, bg="#0b0e14", fg="#c9d3e2", insertbackground="white", relief="flat", font=("Cascadia Mono", 9), wrap="word", height=8, state="disabled")
         self.log.pack(fill="both", expand=True, pady=(7, 0))
 
     def _log(self, text: str):
@@ -223,6 +257,9 @@ class ClippingApp(tk.Tk):
     def _save_preferences(self):
         _write_json(PREFERENCES, {"last_folder": self.folder.get(), "caption_style": self.caption_style.get(),
                                   "caption_placement": self.caption_placement.get(),
+                                  "content_type": self.content_type.get(),
+                                  "highlight_preference": self.highlight_preference.get(),
+                                  "length_profile": self.length_profile.get(),
                                   "editorial_endpoint": self.editorial_endpoint.get(),
                                   "editorial_model": self.editorial_model.get()})
 
@@ -234,6 +271,9 @@ class ClippingApp(tk.Tk):
     def _configure_local_options(self):
         os.environ["CLIPPER_CAPTION_STYLE"] = self.caption_style.get()
         os.environ["CLIPPER_CAPTION_PLACEMENT"] = self.caption_placement.get()
+        os.environ["CLIPPER_CONTENT_TYPE"] = self.content_type.get()
+        os.environ["CLIPPER_HIGHLIGHT_PREFERENCE"] = self.highlight_preference.get()
+        os.environ["CLIPPER_CLIP_LENGTH_PROFILE"] = self.length_profile.get()
         if self.editorial_endpoint.get().strip():
             os.environ["CLIPPER_LOCAL_LLM_ENDPOINT"] = self.editorial_endpoint.get().strip()
         else:
@@ -243,6 +283,10 @@ class ClippingApp(tk.Tk):
         else:
             os.environ.pop("CLIPPER_LOCAL_LLM_MODEL", None)
         self._save_preferences()
+
+    def _clip_lengths(self):
+        return {"Auto": (self.minimum.get(), self.maximum.get()), "Short": (12, 30),
+                "Standard": (20, 60), "Story": (40, 90)}[self.length_profile.get()]
 
     def _choose_single(self):
         if self.running:
@@ -267,7 +311,8 @@ class ClippingApp(tk.Tk):
         transcription = faster.get("status") == "available" and _whisper_model_cached(self.model.get())
         if not transcription and not messagebox.askyesno("Continue without speech recognition?", "Whisper or its selected model is unavailable. Continue in heuristic-only mode? No model will be downloaded.", parent=self):
             return
-        if not 1 <= self.count.get() <= 5 or self.minimum.get() < 1 or self.maximum.get() < self.minimum.get() or self.maximum.get() > 180:
+        min_length, max_length = self._clip_lengths()
+        if not 1 <= self.count.get() <= 5 or min_length < 1 or max_length < min_length or max_length > 180:
             messagebox.showerror("Invalid settings", "Single-episode mode supports 1–5 clips and durations up to 180 seconds.", parent=self)
             return
         if self.semantic.get() and not vision_installation_status().get("ready"):
@@ -286,7 +331,7 @@ class ClippingApp(tk.Tk):
         manager = ModelManager(self.model.get(), local_files_only=True,
                                status_callback=lambda value: self.queue.put(("model_status", value)))
         vision = VisionModelManager(status_callback=lambda value: self.queue.put(("vision_status", value))) if self.semantic.get() else None
-        settings = (self.model.get(), self.count.get(), self.minimum.get(), self.maximum.get(), self.encoder.get(), self.semantic.get())
+        settings = (self.model.get(), self.count.get(), min_length, max_length, self.encoder.get(), self.semantic.get())
         threading.Thread(target=self._single_worker, args=(source, settings, manager, vision, transcription), daemon=True).start()
 
     def _single_worker(self, source, settings, manager, vision, transcription):
@@ -395,7 +440,8 @@ class ClippingApp(tk.Tk):
         if not videos:
             messagebox.showinfo("No videos found", "This folder contains no supported video files.")
             return
-        if (self.count.get() < 1 or self.minimum.get() < 1 or self.maximum.get() < self.minimum.get() or
+        min_length, max_length = self._clip_lengths()
+        if (self.count.get() < 1 or min_length < 1 or max_length < min_length or
                 not 1 <= self.target.get() <= 10 or not 1 <= self.max_hours.get() <= 24 or
                 not 1 <= self.batch_size.get() <= 4):
             messagebox.showerror("Invalid settings", "Check clip duration, target (1–10), session hours (1–24), and microbatch (1–4).")
@@ -421,7 +467,7 @@ class ClippingApp(tk.Tk):
         self.cancel_button.configure(state="normal")
         if not transcription_enabled:
             self.model_status.set("Whisper unavailable · heuristic-only for this run · no download")
-        settings = (self.model.get(), self.count.get(), self.minimum.get(), self.maximum.get(), self.encoder.get(), self.semantic.get())
+        settings = (self.model.get(), self.count.get(), min_length, max_length, self.encoder.get(), self.semantic.get())
         self._save_preferences()
         def progress(message):
             OUTPUT.mkdir(parents=True, exist_ok=True)
@@ -526,6 +572,7 @@ class ClippingApp(tk.Tk):
                     if kind == "single_finished":
                         name, count, self.latest_output = value
                         self.latest_button.configure(state="normal")
+                        self._load_review_folder(self.latest_output)
                         self.status.set(f"Single episode complete · {name} · {count} validated clip(s)")
                     else:
                         self.status.set("Single episode failed · see log")
@@ -652,6 +699,98 @@ class ClippingApp(tk.Tk):
             os.startfile(str(self.latest_output))
         else:
             subprocess.Popen(["xdg-open", str(self.latest_output)])
+
+    def _load_review_folder(self, folder: Path):
+        self.review_folder = folder
+        self.review_items.clear()
+        for item in self.review_tree.get_children():
+            self.review_tree.delete(item)
+        try:
+            data = json.loads((folder / "analysis.json").read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return
+        for index, clip in enumerate(data.get("clips", [])):
+            filename = clip.get("filename")
+            if not isinstance(filename, str) or Path(filename).name != filename:
+                continue
+            editorial = clip.get("editorial", {})
+            plan = clip.get("reframing", {})
+            modes = sorted({shot.get("composition", "full_frame_contain") for shot in plan.get("shots", [])})
+            iid = f"clip-{index + 1}"
+            self.review_items[iid] = {**clip, "folder": folder, "editorial": editorial,
+                                      "debug_image": plan.get("debug_image")}
+            self.review_tree.insert("", "end", iid=iid, values=(filename, clip.get("category", "unknown"),
+                f"{clip.get('start', 0):.1f}–{clip.get('end', 0):.1f}s", f"{clip.get('duration', 0):.1f}s",
+                f"{editorial.get('editorial_score'):.2f}" if isinstance(editorial.get("editorial_score"), (int, float)) else "—",
+                ", ".join(modes) or "full_frame_contain", clip.get("caption_style", "bold_pop"),
+                clip.get("validation", clip.get("status", "unknown"))))
+        children = self.review_tree.get_children()
+        if children:
+            self.review_tree.selection_set(children[0])
+            self._review_selected()
+
+    def _selected_review_item(self):
+        selected = self.review_tree.selection()
+        return self.review_items.get(selected[0]) if selected else None
+
+    def _review_selected(self, _event=None):
+        item = self._selected_review_item()
+        if not item:
+            return
+        thumbnail = item["folder"] / f"{Path(item['filename']).stem}_thumb.png"
+        try:
+            self.review_image = tk.PhotoImage(file=str(thumbnail))
+            factor = max(1, self.review_image.width() // 160)
+            if factor > 1:
+                self.review_image = self.review_image.subsample(factor)
+            self.review_image_label.configure(image=self.review_image, text="")
+        except tk.TclError:
+            self.review_image = None
+            self.review_image_label.configure(image="", text="Thumbnail unavailable")
+
+    @staticmethod
+    def _open_local_file(path: Path):
+        if not path.is_file() and not path.is_dir():
+            messagebox.showinfo("File unavailable", f"Could not find {path}.")
+            return
+        if os.name == "nt":
+            os.startfile(str(path))
+        else:
+            subprocess.Popen(["xdg-open", str(path)])
+
+    def _play_review_clip(self):
+        item = self._selected_review_item()
+        if item:
+            self._open_local_file(item["folder"] / item["filename"])
+
+    def _reveal_review_clip(self):
+        item = self._selected_review_item()
+        if item:
+            path = item["folder"] / item["filename"]
+            if os.name == "nt":
+                subprocess.Popen(["explorer", "/select,", str(path)])
+            else:
+                self._open_local_file(item["folder"])
+
+    def _open_review_srt(self):
+        item = self._selected_review_item()
+        if item:
+            self._open_local_file((item["folder"] / item["filename"]).with_suffix(".srt"))
+
+    def _open_review_analysis(self):
+        item = self._selected_review_item()
+        if item:
+            self._open_local_file(item["folder"] / "analysis.json")
+
+    def _open_review_contact_sheet(self):
+        item = self._selected_review_item()
+        if item:
+            self._open_local_file(item["folder"] / "clip_contact_sheet.png")
+
+    def _open_review_debug(self):
+        item = self._selected_review_item()
+        if item and item.get("debug_image"):
+            self._open_local_file(item["folder"] / item["debug_image"])
 
 
 if __name__ == "__main__":

@@ -160,6 +160,24 @@ class ClipperTests(unittest.TestCase):
             self.assertFalse(rendered["audio_video_sync_checked"])
 
     @unittest.skipUnless(ffmpeg_path() and ffprobe_path(), "FFmpeg/FFprobe unavailable")
+    def test_render_uses_shot_specific_crop_then_safe_contain(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source = self._make_video(root, False)
+            crop = {"x": 0, "y": 0, "width": 134, "height": 240}
+            plan = {"shots": [
+                {"shot_id": 0, "start": 0, "end": 1, "composition": "saliency_crop", "crop": crop,
+                 "focus_path": [{"sample_time": .5, "center_x": 67}], "obstructions": []},
+                {"shot_id": 1, "start": 1, "end": 2, "composition": "full_frame_contain", "crop": None,
+                 "focus_path": [], "obstructions": []}]}
+            output = root / "shot_plan.mp4"
+            result = render(source, output, probe(source), {"start": 0, "end": 2}, [], False,
+                            threading.Event(), "libx264", plan,
+                            [{"start": 0, "end": 1, "anchor": "lower"}, {"start": 1, "end": 2, "anchor": "upper"}])
+            self.assertEqual(["saliency_crop", "full_frame_contain"], result["composition_modes"])
+            self.assertEqual((1080, 1920), (result["width"], result["height"]))
+
+    @unittest.skipUnless(ffmpeg_path() and ffprobe_path(), "FFmpeg/FFprobe unavailable")
     def test_nvenc_encode_if_runtime_probe_passes(self):
         usable, reason = verify_encoder("h264_nvenc")
         if not usable:

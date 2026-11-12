@@ -14,7 +14,9 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Callable
 from diagnostics import ffmpeg_path, ffprobe_path, verify_encoder
-from captions import PRESETS, ass_style, group_words
+from captions import PRESETS, anchor_override, ass_style, group_words, shot_placements
+from reframing import PLAN_VERSION, build_reframe_plan, crop_x_expression, write_reframe_debug
+from storyboard import STORYBOARD_VERSION, write_candidate_storyboard
 from editorial import (QUALITY_FLOOR, apply_assessment, assess_candidate, local_endpoint,
                        transcript_windows)
 from model_manager import ModelManager
@@ -283,6 +285,7 @@ def _write_contact_sheet(folder: Path, clips: list[dict]) -> Path | None:
                       "-q:v", "4", str(image_path)])
                 image = cv2.imread(str(image_path))
                 if image is not None:
+                    cv2.imwrite(str(folder / f"{source.stem}_thumb.png"), cv2.resize(image, (320, 568)))
                     cards.append((image, f"{index:03} · {item.get('category', 'clip')} · {item.get('duration', 0):.0f}s"))
             except Exception:
                 continue
@@ -767,18 +770,25 @@ def rank_clips(duration: float, motion: list[float], audio: list[float], cuts: l
 
 
 def _ass_text(words: list[Word], start: float, end: float, style: str | None = None,
-              placement: str | None = None) -> str:
+              placement: str | None = None, placements: list[dict] | None = None) -> str:
     style = style or os.getenv("CLIPPER_CAPTION_STYLE", "bold_pop")
-    placement = placement or os.getenv("CLIPPER_CAPTION_PLACEMENT", "lower")
+    placement = placement or os.getenv("CLIPPER_CAPTION_PLACEMENT", "auto")
     if style not in PRESETS:
         style = "bold_pop"
+    if placement not in {"auto", "lower", "middle", "upper"}:
+        placement = "lower"
+    if placement == "auto":
+        placement = "lower"
     events = []
     for line in group_words(words, start, end, style):
         karaoke = style != "cinematic_minimal"
         words_text = [f"{{\\kf{max(1, round((w.end - w.start) * 100))}}}{_ass_escape(w.text)}" if karaoke
                       else _ass_escape(w.text) for w in line]
         text = " ".join(words_text[:4]) + ("\\N" + " ".join(words_text[4:]) if len(words_text) > 4 else "")
-        events.append(f"Dialogue: 0,{_ass_time(max(0, line[0].start-start))},{_ass_time(min(end-start, line[-1].end-start))},Default,,0,0,0,,{text.strip()}")
+        midpoint = (line[0].start + line[-1].end) / 2
+        anchor = next((item["anchor"] for item in placements or [] if item["start"] <= midpoint < item["end"]), None)
+        override = anchor_override(anchor) if anchor else ""
+        events.append(f"Dialogue: 0,{_ass_time(max(0, line[0].start-start))},{_ass_time(min(end-start, line[-1].end-start))},Default,,0,0,0,,{override}{text.strip()}")
     return "\n".join(["[Script Info]", "ScriptType: v4.00+", "WrapStyle: 2", "ScaledBorderAndShadow: yes", "PlayResX: 1080", "PlayResY: 1920", "[V4+ Styles]", "Format: Name,Fontname,Fontsize,PrimaryColour,SecondaryColour,OutlineColour,BackColour,Bold,Italic,Underline,StrikeOut,ScaleX,ScaleY,Spacing,Angle,BorderStyle,Outline,Shadow,Alignment,MarginL,MarginR,MarginV,Encoding", ass_style(style, placement), "[Events]", "Format: Layer,Start,End,Style,Name,MarginL,MarginR,MarginV,Effect,Text", *events])
 
 
@@ -910,8 +920,48 @@ def select_encoder(requested: str = "auto") -> tuple[str, str]:
     return "libx264", fallback
 
 
+def _render_filter(info: VideoInfo, clip: dict, ass_path: Path, reframe_plan: dict | None = None) -> str:
+    shots = (reframe_plan or {}).get("shots", [])
+    if not shots:
+        return (f"[0:v]split=2[bg][fg];[bg]scale=1080:1920:force_original_aspect_ratio=increase,"
+                f"crop=1080:1920,boxblur=30:10[bg2];[fg]scale=1080:1920:force_original_aspect_ratio=decrease[fg2];"
+                f"[bg2][fg2]overlay=(W-w)/2:(H-h)/2,subtitles='{_escape_filter(ass_path)}',fps=30,format=yuv420p[v]")
+    pieces = []
+    labels = []
+    clip_start = float(clip["start"])
+    for index, shot in enumerate(shots):
+        shot_start = max(0.0, float(shot["start"]) - clip_start)
+        shot_end = min(float(clip["end"] - clip_start), float(shot["end"]) - clip_start)
+        if shot_end <= shot_start:
+            continue
+        label = f"shot{index}"
+        crop = shot.get("crop") if shot.get("composition") in {"subject_crop", "saliency_crop"} else None
+        if crop and crop["width"] / crop["height"] > 0:
+            expression = crop_x_expression(shot.get("focus_path", []), crop["width"], info.width,
+                                           shot_end - shot_start).replace(",", r"\,")
+            pieces.append(f"[0:v]trim=start={shot_start:.3f}:end={shot_end:.3f},setpts=PTS-STARTPTS,"
+                          f"crop={crop['width']}:{crop['height']}:'{expression}':{crop['y']},"
+                          f"scale=1080:1920,setsar=1[{label}]")
+        else:
+            pieces.append(f"[0:v]trim=start={shot_start:.3f}:end={shot_end:.3f},setpts=PTS-STARTPTS,split=2[bg{index}][fg{index}];"
+                          f"[bg{index}]scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,boxblur=30:10[bg{index}x];"
+                          f"[fg{index}]scale=1080:1920:force_original_aspect_ratio=decrease[fg{index}x];"
+                          f"[bg{index}x][fg{index}x]overlay=(W-w)/2:(H-h)/2,setsar=1[{label}]")
+        labels.append(f"[{label}]")
+    if not labels:
+        raise ValueError("Reframing plan contains no renderable shot intervals")
+    if len(labels) == 1:
+        base = labels[0]
+    else:
+        base = "[joined]"
+        pieces.append("".join(labels) + f"concat=n={len(labels)}:v=1:a=0{base}")
+    pieces.append(f"{base}subtitles='{_escape_filter(ass_path)}',fps=30,format=yuv420p[v]")
+    return ";".join(pieces)
+
+
 def render(path: Path, output: Path, info: VideoInfo, clip: dict, words: list[Word], has_audio: bool,
-           cancel: threading.Event, encoder: str = "auto") -> dict:
+           cancel: threading.Event, encoder: str = "auto", reframe_plan: dict | None = None,
+           caption_shots: list[dict] | None = None) -> dict:
     output.parent.mkdir(parents=True, exist_ok=True)
     srt_path = output.with_suffix(".srt")
     temp_video = output.with_name(output.stem + ".partial" + output.suffix)
@@ -920,10 +970,11 @@ def render(path: Path, output: Path, info: VideoInfo, clip: dict, words: list[Wo
     duration = clip["end"] - clip["start"]
     selected_encoder, encoder_note = select_encoder(encoder)
     temp_srt.write_text(_srt(words, clip["start"], clip["end"]), encoding="utf-8")
-    ass_path.write_text(_ass_text(words, clip["start"], clip["end"]), encoding="utf-8-sig")
+    placement = os.getenv("CLIPPER_CAPTION_PLACEMENT", "auto")
+    ass_path.write_text(_ass_text(words, clip["start"], clip["end"], placement=placement,
+                                  placements=caption_shots), encoding="utf-8-sig")
     try:
-        # Keep the full source frame visible over a blurred fill.
-        filt = f"[0:v]split=2[bg][fg];[bg]scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,boxblur=30:10[bg2];[fg]scale=1080:1920:force_original_aspect_ratio=decrease[fg2];[bg2][fg2]overlay=(W-w)/2:(H-h)/2,subtitles='{_escape_filter(ass_path)}',fps=30,format=yuv420p[v]"
+        filt = _render_filter(info, clip, ass_path, reframe_plan)
         cmd = ["ffmpeg", "-y", "-ss", f"{clip['start']:.3f}", "-i", str(path), "-t", f"{duration:.3f}", "-filter_complex", filt, "-map", "[v]"]
         if has_audio:
             cmd += ["-map", "0:a:0", "-af", "loudnorm=I=-16:TP=-1.5:LRA=11", "-c:a", "aac", "-b:a", "192k"]
@@ -943,6 +994,8 @@ def render(path: Path, output: Path, info: VideoInfo, clip: dict, words: list[Wo
         os.replace(temp_srt, srt_path)
         os.replace(temp_video, output)
         return {**checked, "encoder": selected_encoder, "encoder_note": encoder_note,
+                "composition_modes": [shot.get("composition", "full_frame_contain") for shot in (reframe_plan or {}).get("shots", [])],
+                "reframe_plan": reframe_plan,
                 "encode_seconds": round(encode_seconds, 3), "validation_seconds": round(validation_seconds, 3)}
     finally:
         temp_video.unlink(missing_ok=True)
@@ -976,8 +1029,12 @@ def process_video(path: Path, output_root: Path, model_size: str, clip_count: in
                 "semantic_enabled": semantic_enabled, "transcription_enabled": transcription_enabled,
                 "editorial_engine": "editorial-v1", "local_editorial_model": os.getenv("CLIPPER_LOCAL_LLM_MODEL", ""),
                 "local_editorial_endpoint": os.getenv("CLIPPER_LOCAL_LLM_ENDPOINT", ""),
+                "reframing_engine": PLAN_VERSION, "storyboard_engine": STORYBOARD_VERSION,
+                "content_type": os.getenv("CLIPPER_CONTENT_TYPE", "Auto"),
+                "highlight_preference": os.getenv("CLIPPER_HIGHLIGHT_PREFERENCE", "Auto"),
+                "clip_length_profile": os.getenv("CLIPPER_CLIP_LENGTH_PROFILE", "Auto"),
                 "caption_style": os.getenv("CLIPPER_CAPTION_STYLE", "bold_pop"),
-                "caption_placement": os.getenv("CLIPPER_CAPTION_PLACEMENT", "lower")}
+                "caption_placement": os.getenv("CLIPPER_CAPTION_PLACEMENT", "auto")}
     existing_manifest = {}
     if manifest_path.exists():
         try:
@@ -1234,6 +1291,19 @@ def process_video(path: Path, output_root: Path, model_size: str, clip_count: in
                 vision.release()
         stage_timings["semantic_analysis_seconds"] = round(time.perf_counter() - semantic_started, 3)
     clips = selection["selected"]
+    for candidate_id, candidate in enumerate(selection["candidates"], 1):
+        candidate["candidate_id"] = f"candidate_{candidate_id:03}"
+    storyboard_summary = {"status": "unavailable", "path": None, "candidate_count": 0}
+    try:
+        storyboard_path = write_candidate_storyboard(path, folder / "candidate_storyboard", selection, words, cuts)
+        if storyboard_path:
+            storyboard_summary = {"status": "created", "path": str(storyboard_path.relative_to(folder)),
+                                  "candidate_count": min(8, len(selection["candidates"]))}
+    except InterruptedError:
+        raise
+    except Exception as exc:
+        storyboard_summary["reason"] = f"{type(exc).__name__}: {exc}"
+        progress(f"Candidate storyboard unavailable: {exc}")
     durations = ", ".join(f"{clip['duration']:.0f}s" for clip in clips) or "none"
     progress(f"Candidates · {selection['candidate_count']} generated, {len(clips)} selected · {durations}")
     candidate_report = {"candidate_count": selection["candidate_count"], "rejected_count": selection["rejected_count"],
@@ -1257,7 +1327,8 @@ def process_video(path: Path, output_root: Path, model_size: str, clip_count: in
                     "source_mtime_ns": source_stat.st_mtime_ns, "settings": settings, "source_duration": info.duration,
                     "metadata": asdict(info), "language": transcript.language, "output_resolution": "1080x1920",
                     "clips": report_clips, "candidate_selection": candidate_report, "editorial_analysis": editorial_summary,
-                    "semantic_analysis": semantic_summary, "review_artifacts": dict(review_artifacts),
+                    "semantic_analysis": semantic_summary, "candidate_storyboard": dict(storyboard_summary),
+                    "review_artifacts": dict(review_artifacts),
                     "queue_stage": queue_stage, "stage_timings": dict(stage_timings),
                     "stage_timings_by_pass": stage_history,
                     "analysis_cache_status": analysis_cache_status, "scene_cuts": cuts,
@@ -1323,14 +1394,36 @@ def process_video(path: Path, output_root: Path, model_size: str, clip_count: in
             break
         progress(f"Rendering clip {index}/{len(clips)} from {path.name}")
         clip_started = time.perf_counter()
-        render_info = render(path, folder / filename, info, clip, words, info.has_audio, cancel, encoder)
+        try:
+            reframe_plan = build_reframe_plan(path, clip["start"], clip["end"], cuts, cancel)
+        except InterruptedError:
+            raise
+        except Exception as exc:
+            progress(f"Smart framing fallback · {type(exc).__name__}: {exc}")
+            from reframing import shot_intervals
+            reframe_plan = {"version": PLAN_VERSION, "status": "fallback", "source_width": info.width,
+                            "source_height": info.height,
+                            "shots": [{"shot_id": shot_id, "start": shot_start, "end": shot_end,
+                                       "composition": "full_frame_contain", "crop": None, "focus_path": [],
+                                       "obstructions": [], "evidence": str(exc)}
+                                      for shot_id, (shot_start, shot_end) in enumerate(
+                                          shot_intervals(clip["start"], clip["end"], cuts))]}
+        debug_image = write_reframe_debug(path, reframe_plan, folder / "reframe_debug" / f"clip_{index:03}.png")
+        reframe_plan["debug_image"] = str(debug_image.relative_to(folder)) if debug_image else None
+        caption_plan = shot_placements(reframe_plan.get("shots", []), os.getenv("CLIPPER_CAPTION_PLACEMENT", "auto"))
+        for shot, placement in zip(reframe_plan.get("shots", []), caption_plan):
+            shot["caption_placement"] = placement
+        render_info = render(path, folder / filename, info, clip, words, info.has_audio, cancel, encoder,
+                             reframe_plan, caption_plan)
         stage_timings[f"clip_{index:03}_render_call_seconds"] = round(time.perf_counter() - clip_started, 3)
         stage_timings[f"clip_{index:03}_encoding_seconds"] = render_info.get("encode_seconds", 0)
         stage_timings[f"clip_{index:03}_validation_seconds"] = render_info.get("validation_seconds", 0)
         progress(f"Validated clip_{index:03}.mp4 · {render_info['encoder']} · {render_info['encoder_note']}")
         report_clip = {"filename": filename, **clip, "duration": round(clip["end"] - clip["start"], 3),
                        "category": clip.get("editorial_category", clip.get("semantic_category", "mixed activity")), "status": "completed",
-                       "validation": "VALIDATED", "render": render_info}
+                       "validation": "VALIDATED", "reframing": reframe_plan,
+                       "caption_placements": caption_plan, "caption_style": settings["caption_style"],
+                       "caption_placement": settings["caption_placement"], "render": render_info}
         report_clips.append(report_clip)
         persist("RENDERING")
         if clip_validated:

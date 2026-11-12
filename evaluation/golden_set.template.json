@@ -1,0 +1,18 @@
+{
+  "schema": "clipper-golden-v1",
+  "annotation_policy": "Human judgement only. Leave unknown fields null. Do not fill labels from model predictions.",
+  "labels": [
+    {
+      "source_id": "source-filename.mp4",
+      "start": 12.5,
+      "end": 28.0,
+      "category": "COMEDY",
+      "keep": true,
+      "self_contained": true,
+      "payoff_lands": true,
+      "framing_acceptable": null,
+      "captions_acceptable": null,
+      "reviewer_notes": "Replace this example with a human annotation."
+    }
+  ]
+}
