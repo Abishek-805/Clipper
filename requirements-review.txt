@@ -1,0 +1,2 @@
+# Optional dependency for the isolated embedded-video review workspace.
+python-vlc==3.0.21203
