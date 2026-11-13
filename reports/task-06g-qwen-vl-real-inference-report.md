@@ -83,6 +83,12 @@ The running PID was checked against the exact `.runtime` llama-server executable
 - `reports/task-06g-qwen-vl-real-inference-report.md` — this completion and evidence report.
 - `reports/IMPLEMENTATION_STATUS.md` — replace the obsolete preflight status with measured results.
 
+## Git publication
+
+The implementation and audit were committed on the existing feature branch as `b73f768f02516bbf60a7a5a0bb1c9c2febca0efe` (`Complete Task 06G Qwen-VL experiment audit`) and pushed to `origin/feature/task-06g-qwen-vl-real-inference`. The remote branch was absent before this task and was created by that push. At verification, the remote matched the commit.
+
+Protected references were unchanged: `main` remained `1fe43b76de7c20930c34f36c6ea86696fd72c695`, Task 06B backup remained `37e6bcbcb7f9c220a265c2215fdf2709ea2323f0`, and Task 06F remained `6be5077c8eb98b601a351ed5b064dea309caf2f6`. The local Task 06D.3 UI branch also remained at `157f2c91f7191ced4c9d28277b83ed3f79fd32f7`. No protected branch was pushed or modified.
+
 ## Acceptance statement and limitations
 
 **REAL MODEL INFERENCE: SUCCESSFUL.**
