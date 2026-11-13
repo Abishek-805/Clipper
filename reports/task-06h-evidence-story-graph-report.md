@@ -116,4 +116,4 @@ Results:
 
 ## Git publication record
 
-The code and report are on `feature/task-06h-evidence-story-graph`, based on `b4c0540c885af0241ab081c9ab06056d6185065a`. The implementation commit and final feature-branch remote status are recorded in the completion message after validation and publication. Protected branches remain unchanged.
+The code is committed as `1b6e48edb96830b0b5b4747a052d87b4c33ae143` on `feature/task-06h-evidence-story-graph`, based on `b4c0540c885af0241ab081c9ab06056d6185065a`. That commit was pushed to `origin/feature/task-06h-evidence-story-graph`, and `git ls-remote` verified the remote ref at the same SHA. This report publication record is a follow-up commit on the same feature branch; the final branch SHA is included in the completion message. Protected branches remain unchanged.
