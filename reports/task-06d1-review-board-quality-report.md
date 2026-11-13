@@ -78,5 +78,6 @@ Open `index.html` to review and listen, then export the JSON dataset for a porta
 
 - Branch: `feature/task-06d1-review-board-quality`
 - Baseline: `3cf88adad32e2fba9df303379d14851506cff0f9`
-- Commit and remote status: pending final publication check.
+- Implementation commit: `8fe1fad` (`Deduplicate anime review board and include audio`), pushed to `origin/feature/task-06d1-review-board-quality`.
+- The report update records the final commit after its push; protected refs were checked unchanged: Task 06D `3cf88adad32e2fba9df303379d14851506cff0f9`, Task 06C `b9b07d410f0cdcaceeb4456a3feaabc543b08a45`, `main` `1fe43b76de7c20930c34f36c6ea86696fd72c695`, and Task 06B backup `37e6bcbcb7f9c220a265c2215fdf2709ea2323f0`.
 - Task 06E and Task 07 have not started.
