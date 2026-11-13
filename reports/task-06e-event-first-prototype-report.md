@@ -77,4 +77,7 @@ This milestone provides a reviewable alternative representation of complete tran
 
 ## Git publication
 
-The branch commit and push verification are recorded after validation and publication.
+- Implementation commit: `c329df1f6e5f750ca48f211204ddf51b5013d021`.
+- Branch: `feature/task-06e-event-first-prototype`.
+- Push: verified on `origin` at the implementation commit before this publication note was added.
+- Protected remote refs were checked before work and remained at their recorded baseline commits. No protected branch was pushed or modified.
