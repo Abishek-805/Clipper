@@ -8,6 +8,8 @@ import queue
 import subprocess
 import sys
 import threading
+import time
+import uuid
 import tkinter as tk
 from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
@@ -22,6 +24,7 @@ from queue_runner import NightlySessionRunner
 APP_DIR = Path(__file__).resolve().parent
 OUTPUT = APP_DIR / "Shorts_Output"
 APP_STATE = Path(os.environ.get("LOCALAPPDATA", APP_DIR)) / "Clipper"
+ANALYSIS_CACHE = APP_STATE / "analysis_cache"
 PREFERENCES = APP_STATE / "preferences.json"
 INTERRUPTED_JOB = APP_STATE / "interrupted_job.json"
 
@@ -57,7 +60,7 @@ def _source_output_folder(source: Path, base: Path = OUTPUT) -> Path:
 class ClippingApp(tk.Tk):
     def __init__(self):
         super().__init__()
-        self.title("AI Video Clipping Factory")
+        self.title("Clipper Personal Preview 0.1")
         self.geometry("1020x900")
         self.minsize(820, 700)
         self.configure(bg="#10141d")
@@ -78,8 +81,10 @@ class ClippingApp(tk.Tk):
         self.max_hours = tk.IntVar(value=6)
         self.batch_size = tk.IntVar(value=2)
         self.single_file = tk.StringVar(value="")
-        self.audio_track = tk.StringVar(value="Auto (default)")
+        self.audio_track = tk.StringVar(value="Choose audio track…")
         self.audio_track_indices = {}
+        self.source_streams = []
+        self.source_info = None
         self.caption_source = tk.StringVar(value="Whisper transcription")
         self.subtitle_track_indices = {}
         self.latest_output: Path | None = None
@@ -95,13 +100,14 @@ class ClippingApp(tk.Tk):
         self.editorial_model.trace_add("write", lambda *_: self.editorial_status.set(self._editorial_status_text()))
         self.diagnostics = collect_diagnostics()
         self.gpu_memory = gpu_memory_usage()
-        self.status = tk.StringVar(value="Select a folder containing videos to begin.")
+        self.status = tk.StringVar(value="Choose one episode to create up to two provisional drafts.")
         self.detected = tk.StringVar(value="0 videos detected")
         self.model_status = tk.StringVar(value="Whisper small · unloaded · CUDA available" if self.diagnostics.get("cuda_devices") else "Whisper small · unloaded · CPU int8 fallback")
         self.vision_status = tk.StringVar(value=self._vision_setup_text(vision_installation_status()))
         self.model.trace_add("write", lambda *_: self.model_status.set(f"Whisper {self.model.get()} · unloaded · load only after Start"))
         self.queue: queue.Queue = queue.Queue()
         self.runner: NightlySessionRunner | None = None
+        self.queue_window = None
         try:
             self.queue_store = QueueStore(APP_STATE / "queue.sqlite3")
         except Exception as exc:
@@ -120,151 +126,139 @@ class ClippingApp(tk.Tk):
         style.theme_use("clam")
         style.configure("TFrame", background="#10141d")
         style.configure("TLabel", background="#10141d", foreground="#edf2fa", font=("Segoe UI", 10))
-        style.configure("Title.TLabel", font=("Segoe UI Semibold", 23), foreground="#ffffff")
+        style.configure("Title.TLabel", font=("Segoe UI Semibold", 24), foreground="#ffffff")
         style.configure("Sub.TLabel", foreground="#9ba8bb")
         style.configure("TButton", font=("Segoe UI Semibold", 10), padding=(13, 9))
-        style.configure("Accent.TButton", background="#7157ff", foreground="white")
-        style.map("Accent.TButton", background=[("active", "#8975ff"), ("disabled", "#3d3b59")])
-        style.configure("Horizontal.TProgressbar", troughcolor="#252d3b", background="#7157ff", bordercolor="#252d3b")
-        root = ttk.Frame(self, padding=26)
+        style.configure("Accent.TButton", background="#357e72", foreground="white")
+        style.map("Accent.TButton", background=[("active", "#438f82"), ("disabled", "#354b49")])
+        style.configure("Horizontal.TProgressbar", troughcolor="#252d3b", background="#438f82", bordercolor="#252d3b")
+        root = ttk.Frame(self, padding=30)
         root.pack(fill="both", expand=True)
-        ttk.Label(root, text="AI Video Clipping Factory", style="Title.TLabel").pack(anchor="w")
-        ttk.Label(root, text="Local analysis · vertical Shorts · originals stay untouched", style="Sub.TLabel").pack(anchor="w", pady=(4, 22))
-        row = ttk.Frame(root)
-        row.pack(fill="x")
-        self.select_button = ttk.Button(row, text="Select Video Folder", command=self._select)
-        self.select_button.pack(side="left")
-        ttk.Label(row, textvariable=self.detected, style="Sub.TLabel").pack(side="right", padx=4)
-        ttk.Label(root, textvariable=self.folder, style="Sub.TLabel").pack(anchor="w", fill="x", pady=(9, 12))
-        single_row = ttk.Frame(root)
-        single_row.pack(fill="x", pady=(0, 12))
-        ttk.Button(single_row, text="Choose One Episode…", command=self._choose_single).pack(side="left")
-        ttk.Label(single_row, textvariable=self.single_file, style="Sub.TLabel").pack(side="left", padx=10, fill="x", expand=True)
-        track_row = ttk.LabelFrame(root, text=" One-episode stream selection ", padding=(10, 5))
-        track_row.pack(fill="x", pady=(0, 10))
-        ttk.Label(track_row, text="Audio", style="Sub.TLabel").pack(side="left")
-        self.audio_combo = ttk.Combobox(track_row, textvariable=self.audio_track, values=("Auto (default)",), width=38, state="readonly")
-        self.audio_combo.pack(side="left", padx=(5, 14))
-        ttk.Label(track_row, text="Captions", style="Sub.TLabel").pack(side="left")
-        self.caption_combo = ttk.Combobox(track_row, textvariable=self.caption_source,
+        ttk.Label(root, text="Clipper", style="Title.TLabel").pack(anchor="w")
+        ttk.Label(root, text="Personal Preview 0.1 · local episode drafts", style="Sub.TLabel").pack(anchor="w", pady=(4, 24))
+        choose = ttk.LabelFrame(root, text=" 1 · Choose episode ", padding=16)
+        choose.pack(fill="x", pady=(0, 12))
+        self.select_button = ttk.Button(choose, text="Choose video…", command=self._choose_single)
+        self.select_button.pack(anchor="w")
+        self.episode_details = tk.StringVar(value="No episode selected")
+        ttk.Label(choose, textvariable=self.episode_details, style="Sub.TLabel", wraplength=800).pack(anchor="w", fill="x", pady=(10, 0))
+        streams = ttk.LabelFrame(root, text=" 2 · Audio and captions ", padding=16)
+        streams.pack(fill="x", pady=(0, 12))
+        ttk.Label(streams, text="Audio track", style="Sub.TLabel").grid(row=0, column=0, sticky="w")
+        self.audio_combo = ttk.Combobox(streams, textvariable=self.audio_track, values=("Choose audio track…",), width=50, state="readonly")
+        self.audio_combo.grid(row=1, column=0, sticky="ew", padx=(0, 14), pady=(4, 10))
+        ttk.Label(streams, text="Caption output", style="Sub.TLabel").grid(row=0, column=1, sticky="w")
+        self.caption_combo = ttk.Combobox(streams, textvariable=self.caption_source,
                                           values=("Whisper transcription", "Whisper translation to English", "None"),
-                                          width=34, state="readonly")
-        self.caption_combo.pack(side="left", padx=5)
-        self.stream_details = tk.StringVar(value="Choose one episode to inspect its audio and subtitle streams.")
-        ttk.Label(track_row, textvariable=self.stream_details, style="Sub.TLabel", wraplength=950).pack(anchor="w", pady=(5, 0))
-        advanced = ttk.LabelFrame(root, text=" Output defaults ", padding=(12, 7))
-        advanced.pack(fill="x", pady=(0, 16))
-        for label, var, width in [("Clips per video", self.count, 5), ("Min seconds", self.minimum, 5), ("Max seconds", self.maximum, 5)]:
-            item = ttk.Frame(advanced)
-            item.pack(side="left", padx=(2, 15))
-            ttk.Label(item, text=label, style="Sub.TLabel").pack(anchor="w")
-            ttk.Spinbox(item, from_=1, to=20 if "Clips" in label else 180, textvariable=var, width=width).pack(anchor="w", pady=(4, 0))
-        model_frame = ttk.Frame(advanced)
-        model_frame.pack(side="left", padx=3)
-        ttk.Label(model_frame, text="Whisper model", style="Sub.TLabel").pack(anchor="w")
-        ttk.Combobox(model_frame, textvariable=self.model, values=("tiny", "base", "small", "medium"), width=10, state="readonly").pack(anchor="w", pady=(4, 0))
-        encoder_frame = ttk.Frame(advanced)
-        encoder_frame.pack(side="left", padx=10)
-        ttk.Label(encoder_frame, text="Video encoder", style="Sub.TLabel").pack(anchor="w")
-        ttk.Combobox(encoder_frame, textvariable=self.encoder, values=("auto", "libx264", "h264_nvenc"), width=11, state="readonly").pack(anchor="w", pady=(4, 0))
-        ttk.Checkbutton(advanced, text="Enable optional local semantic scene analysis", variable=self.semantic).pack(side="left", padx=10, pady=(14, 0))
-        captions = ttk.LabelFrame(root, text=" Captions and optional local narrative model ", padding=(12, 7))
-        captions.pack(fill="x", pady=(0, 10))
-        ttk.Label(captions, text="Style", style="Sub.TLabel").pack(side="left")
-        ttk.Combobox(captions, textvariable=self.caption_style, values=("bold_pop", "karaoke", "cinematic_minimal", "boxed"), width=18, state="readonly").pack(side="left", padx=(5, 12))
-        ttk.Label(captions, text="Placement", style="Sub.TLabel").pack(side="left")
-        ttk.Combobox(captions, textvariable=self.caption_placement, values=("auto", "bottom", "top"), width=11, state="readonly").pack(side="left", padx=(5, 12))
-        ttk.Label(captions, text="Local endpoint/model", style="Sub.TLabel").pack(side="left")
-        ttk.Entry(captions, textvariable=self.editorial_endpoint, width=24).pack(side="left", padx=(5, 4))
-        ttk.Entry(captions, textvariable=self.editorial_model, width=12).pack(side="left")
-        ttk.Label(root, textvariable=self.editorial_status, style="Sub.TLabel").pack(anchor="w", pady=(0, 8))
-        content = ttk.LabelFrame(root, text=" Content preferences ", padding=(12, 7))
-        content.pack(fill="x", pady=(0, 10))
-        for label, variable, values, width in (
-                ("Type", self.content_type, ("Auto", "Anime/Animation", "Live Action", "Mixed"), 17),
-                ("Highlight", self.highlight_preference, ("Auto", "Comedy", "Action", "Drama", "Suspense", "Emotional", "Other"), 13),
-                ("Length", self.length_profile, ("Auto", "Short", "Standard", "Story"), 11)):
-            ttk.Label(content, text=label, style="Sub.TLabel").pack(side="left")
-            ttk.Combobox(content, textvariable=variable, values=values, width=width, state="readonly").pack(side="left", padx=(5, 14))
-        ttk.Label(content, text="Hook context (s)", style="Sub.TLabel").pack(side="left")
-        ttk.Spinbox(content, from_=0, to=15, increment=0.5, textvariable=self.context_margin, width=6).pack(side="left", padx=5)
-        ttk.Label(root, text="Automatic target: 45–60 seconds when speech is complete; shorter moments remain eligible.",
-                  style="Sub.TLabel").pack(anchor="w", pady=(0, 5))
-        ranges = ttk.LabelFrame(root, text=" Optional source-time ranges · seconds or HH:MM:SS, separated by semicolons ", padding=(10, 5))
-        ranges.pack(fill="x", pady=(0, 10))
-        ttk.Label(ranges, text="Include", style="Sub.TLabel").pack(side="left")
-        ttk.Entry(ranges, textvariable=self.include_ranges, width=27).pack(side="left", padx=(5, 15))
-        ttk.Label(ranges, text="Exclude", style="Sub.TLabel").pack(side="left")
-        ttk.Entry(ranges, textvariable=self.exclude_ranges, width=27).pack(side="left", padx=5)
-        nightly = ttk.LabelFrame(root, text=" Nightly queue ", padding=(12, 7))
-        nightly.pack(fill="x", pady=(0, 12))
-        for label, variable, upper in (("Shorts this session", self.target, 10), ("Max hours", self.max_hours, 24), ("Microbatch", self.batch_size, 4)):
-            item = ttk.Frame(nightly)
-            item.pack(side="left", padx=(2, 15))
-            ttk.Label(item, text=label, style="Sub.TLabel").pack(anchor="w")
-            ttk.Spinbox(item, from_=1, to=upper, textvariable=variable, width=6).pack(anchor="w", pady=(4, 0))
-        self.queue_summary = tk.StringVar(value="Queue is ready" if self.queue_store else f"Queue unavailable · {self.queue_error}")
-        ttk.Label(nightly, textvariable=self.queue_summary, style="Sub.TLabel").pack(side="left", padx=8)
-        controls = ttk.Frame(root)
-        controls.pack(fill="x", pady=(0, 12))
-        self.start_button = ttk.Button(controls, text="Start Nightly Run", style="Accent.TButton", command=self._start)
-        self.start_button.pack(side="left")
-        self.single_start_button = ttk.Button(controls, text="Clip One Episode", command=self._start_single)
-        self.single_start_button.pack(side="left", padx=8)
-        self.pause_button = ttk.Button(controls, text="Pause", command=self._toggle_pause, state="disabled")
-        self.pause_button.pack(side="left", padx=8)
-        self.cancel_button = ttk.Button(controls, text="Stop Safely", command=self._cancel, state="disabled")
-        self.cancel_button.pack(side="left")
-        self.rescan_button = ttk.Button(controls, text="Rescan Queue", command=self._rescan)
-        self.rescan_button.pack(side="left", padx=8)
-        ttk.Button(controls, text="Open Output Folder", command=self._open_output).pack(side="right")
-        self.latest_button = ttk.Button(controls, text="Open Latest Results", command=self._open_latest_results, state="disabled")
-        self.latest_button.pack(side="right", padx=8)
-        ttk.Button(controls, text="Set Up Vision Model", command=self._setup_vision).pack(side="right", padx=8)
-        queue_tools = ttk.Frame(root)
-        queue_tools.pack(fill="x", pady=(0, 8))
-        ttk.Button(queue_tools, text="View Queue", command=self._view_queue).pack(side="left")
-        self.retry_button = ttk.Button(queue_tools, text="Retry Failures", command=self._retry_failures)
-        self.retry_button.pack(side="left", padx=8)
-        self.reprocess_button = ttk.Button(queue_tools, text="Reprocess Changed", command=self._reprocess_changed)
-        self.reprocess_button.pack(side="left")
-        self.progress = ttk.Progressbar(root, mode="determinate", maximum=100)
-        self.progress.pack(fill="x", pady=(4, 8))
-        ttk.Label(root, textvariable=self.status, style="Sub.TLabel").pack(anchor="w", pady=(0, 9))
-        ttk.Label(root, textvariable=self.model_status, style="Sub.TLabel").pack(anchor="w", pady=(0, 5))
-        ttk.Label(root, textvariable=self.vision_status, style="Sub.TLabel").pack(anchor="w", pady=(0, 5))
-        gpu = self.diagnostics.get("gpu_name") or "NVIDIA GPU not detected"
-        cuda = "CUDA transcription available" if self.diagnostics.get("cuda_devices") else "CPU transcription fallback"
-        memory = f" · VRAM {self.gpu_memory['free_mib']}/{self.gpu_memory['total_mib']} MiB free" if self.gpu_memory else ""
-        encoders = self.diagnostics.get("encoders", {})
-        render = "NVENC verified" if encoders.get("h264_nvenc") else "libx264 verified" if encoders.get("libx264") else "H.264 encoder unavailable"
-        ttk.Label(root, text=f"Runtime · {gpu}{memory} · {cuda} · {render}", style="Sub.TLabel").pack(anchor="w", pady=(0, 8))
-        review = ttk.LabelFrame(root, text=" Clip review ", padding=(10, 6))
-        review.pack(fill="x", pady=(0, 8))
-        review_body = ttk.Frame(review)
-        review_body.pack(fill="x")
-        columns = ("clip", "category", "source_time", "duration", "score", "composition", "caption", "validation")
-        self.review_tree = ttk.Treeview(review_body, columns=columns, show="headings", height=4, selectmode="browse")
-        for column, title, width in zip(columns,
-                ("Clip", "Category", "Source time", "Duration", "Score", "Composition", "Caption", "Status"),
-                (90, 110, 130, 70, 65, 140, 100, 95)):
+                                          width=38, state="readonly")
+        self.caption_combo.grid(row=1, column=1, sticky="ew", pady=(4, 10))
+        self.stream_details = tk.StringVar(value="Choose one video. No folder scan or processing starts during selection.")
+        ttk.Label(streams, textvariable=self.stream_details, style="Sub.TLabel", wraplength=850).grid(row=2, column=0, columnspan=2, sticky="w")
+        streams.columnconfigure(0, weight=1)
+        streams.columnconfigure(1, weight=1)
+        action = ttk.Frame(root)
+        action.pack(fill="x", pady=(10, 16))
+        self.single_start_button = ttk.Button(action, text="Generate Draft Shorts", style="Accent.TButton", command=self._start_single)
+        self.single_start_button.pack(side="left")
+        self.cancel_button = ttk.Button(action, text="Cancel safely", command=self._cancel, state="disabled")
+        self.cancel_button.pack(side="left", padx=10)
+        ttk.Button(action, text="Advanced settings", command=self._open_advanced).pack(side="right")
+        ttk.Button(action, text="Nightly queue…", command=self._open_queue_window).pack(side="right", padx=8)
+        self.progress = ttk.Progressbar(root, mode="indeterminate", maximum=100)
+        self.progress.pack(fill="x", pady=(0, 8))
+        ttk.Label(root, textvariable=self.status).pack(anchor="w")
+        ttk.Label(root, textvariable=self.model_status, style="Sub.TLabel").pack(anchor="w", pady=(5, 0))
+        ttk.Label(root, textvariable=self.vision_status, style="Sub.TLabel").pack(anchor="w", pady=(2, 8))
+        ttk.Label(root, text="3 · Draft results — provisional selection", style="Title.TLabel").pack(anchor="w", pady=(8, 4))
+        ttk.Label(root, text="Selection quality has not been editorially accepted.", style="Sub.TLabel").pack(anchor="w", pady=(0, 6))
+        result = ttk.LabelFrame(root, text=" Latest job ", padding=10)
+        result.pack(fill="x")
+        self.latest_summary = tk.StringVar(value="No job run yet. Your source files remain untouched.")
+        ttk.Label(result, textvariable=self.latest_summary, style="Sub.TLabel", wraplength=850).pack(anchor="w")
+        self.results_links = ttk.Frame(result)
+        self.results_links.pack(fill="x", anchor="w", pady=(8, 0))
+        self.latest_button = ttk.Button(result, text="Open job folder", command=self._open_latest_results, state="disabled")
+        self.latest_button.pack(anchor="e")
+        review = ttk.LabelFrame(root, text=" Draft files ", padding=(8, 6))
+        review.pack(fill="both", expand=True, pady=(10, 0))
+        columns = ("clip", "source_time", "duration", "status")
+        self.review_tree = ttk.Treeview(review, columns=columns, show="headings", height=3, selectmode="browse")
+        for column, title, width in zip(columns, ("MP4", "Source time", "Duration", "Validation"), (160, 150, 90, 110)):
             self.review_tree.heading(column, text=title)
-            self.review_tree.column(column, width=width, minwidth=50, stretch=column in {"category", "composition"})
-        self.review_tree.pack(side="left", fill="x", expand=True)
+            self.review_tree.column(column, width=width, stretch=column == "clip")
+        self.review_tree.pack(fill="both", expand=True)
         self.review_tree.bind("<<TreeviewSelect>>", self._review_selected)
-        self.review_image_label = ttk.Label(review_body, text="Select a clip", anchor="center", width=25)
-        self.review_image_label.pack(side="right", padx=(10, 0))
-        self.review_image = None
         self.review_items = {}
-        actions = ttk.Frame(review)
-        actions.pack(fill="x", pady=(5, 0))
-        for label, callback in (("Play MP4", self._play_review_clip), ("Reveal Folder", self._reveal_review_clip),
-                                ("Open SRT", self._open_review_srt), ("View Analysis", self._open_review_analysis),
-                                ("Contact Sheet", self._open_review_contact_sheet), ("Reframe Debug", self._open_review_debug)):
-            ttk.Button(actions, text=label, command=callback).pack(side="left", padx=(0, 6))
-        ttk.Label(root, text="Processing log", style="Sub.TLabel").pack(anchor="w")
-        self.log = tk.Text(root, bg="#0b0e14", fg="#c9d3e2", insertbackground="white", relief="flat", font=("Cascadia Mono", 9), wrap="word", height=8, state="disabled")
-        self.log.pack(fill="both", expand=True, pady=(7, 0))
+        self.review_image = None
+        self.review_image_label = None
+        log_frame = ttk.LabelFrame(root, text=" Processing log ", padding=(8, 6))
+        log_frame.pack(fill="both", expand=True, pady=(10, 0))
+        self.log = tk.Text(log_frame, bg="#0b0e14", fg="#c9d3e2", insertbackground="white", relief="flat", font=("Cascadia Mono", 9), wrap="word", height=5, state="disabled")
+        self.log.pack(fill="both", expand=True)
+        self._build_settings_windows()
+
+    def _build_settings_windows(self):
+        self.advanced_window = None
+
+    def _populate_advanced_settings(self, advanced):
+        for label, var, width in (("Minimum seconds", self.minimum, 6), ("Maximum seconds", self.maximum, 6)):
+            row = ttk.Frame(advanced); row.pack(fill="x", pady=4)
+            ttk.Label(row, text=label, width=24).pack(side="left")
+            ttk.Spinbox(row, from_=1, to=180, textvariable=var, width=width).pack(side="left")
+        for label, variable, values in (("Whisper model", self.model, ("tiny", "base", "small", "medium")),
+                ("Video encoder", self.encoder, ("auto", "libx264", "h264_nvenc")),
+                ("Caption style", self.caption_style, ("bold_pop", "karaoke", "cinematic_minimal", "boxed")),
+                ("Caption placement", self.caption_placement, ("auto", "bottom", "top")),
+                ("Content type", self.content_type, ("Auto", "Anime/Animation", "Live Action", "Mixed")),
+                ("Highlight", self.highlight_preference, ("Auto", "Comedy", "Action", "Drama", "Suspense", "Emotional", "Other")),
+                ("Length", self.length_profile, ("Auto", "Short", "Standard", "Story"))):
+            row = ttk.Frame(advanced); row.pack(fill="x", pady=4)
+            ttk.Label(row, text=label, width=24).pack(side="left")
+            ttk.Combobox(row, textvariable=variable, values=values, state="readonly", width=28).pack(side="left")
+        ttk.Label(advanced, text="Hook context seconds").pack(anchor="w", pady=(8, 2))
+        ttk.Spinbox(advanced, from_=0, to=15, increment=.5, textvariable=self.context_margin, width=8).pack(anchor="w")
+        ranges = ttk.Frame(advanced); ranges.pack(fill="x", pady=8)
+        ttk.Label(ranges, text="Include ranges").grid(row=0, column=0, sticky="w")
+        ttk.Entry(ranges, textvariable=self.include_ranges, width=36).grid(row=1, column=0, padx=(0, 8))
+        ttk.Label(ranges, text="Exclude ranges").grid(row=0, column=1, sticky="w")
+        ttk.Entry(ranges, textvariable=self.exclude_ranges, width=36).grid(row=1, column=1)
+        ttk.Checkbutton(advanced, text="Optional local semantic analysis", variable=self.semantic).pack(anchor="w", pady=5)
+        for label, variable in (("Local model endpoint", self.editorial_endpoint), ("Local model name", self.editorial_model)):
+            ttk.Label(advanced, text=label).pack(anchor="w", pady=(6, 2))
+            ttk.Entry(advanced, textvariable=variable, width=70).pack(anchor="w")
+        return advanced
+
+    def _open_advanced(self):
+        if self.advanced_window and self.advanced_window.winfo_exists():
+            self.advanced_window.deiconify(); self.advanced_window.lift(); return
+        window = tk.Toplevel(self); window.title("Advanced settings"); window.geometry("620x660"); window.minsize(520, 520)
+        self.advanced_window = window
+        self._populate_advanced_settings(ttk.Frame(window, padding=18)).pack(fill="both", expand=True)
+
+    def _open_queue_window(self):
+        if self.queue_window and self.queue_window.winfo_exists():
+            self.queue_window.deiconify(); self.queue_window.lift(); return
+        window = tk.Toplevel(self); window.title("Nightly queue"); window.geometry("650x360"); window.minsize(520, 300)
+        self.queue_window = window
+        frame = ttk.Frame(window, padding=18); frame.pack(fill="both", expand=True)
+        ttk.Label(frame, text="Nightly queue", style="Title.TLabel").pack(anchor="w")
+        ttk.Label(frame, text="Batch workflow · separate from daily single-episode drafts", style="Sub.TLabel").pack(anchor="w", pady=(3, 16))
+        self.queue_summary = tk.StringVar(value="Queue is ready" if self.queue_store else f"Queue unavailable · {self.queue_error}")
+        ttk.Label(frame, textvariable=self.queue_summary, style="Sub.TLabel").pack(anchor="w", pady=(0, 10))
+        settings = ttk.Frame(frame); settings.pack(fill="x")
+        for label, variable, upper in (("Shorts/session", self.target, 10), ("Max hours", self.max_hours, 24), ("Microbatch", self.batch_size, 4)):
+            item = ttk.Frame(settings); item.pack(side="left", padx=(0, 15))
+            ttk.Label(item, text=label).pack(anchor="w")
+            ttk.Spinbox(item, from_=1, to=upper, textvariable=variable, width=7).pack(anchor="w", pady=4)
+        tools = ttk.Frame(frame); tools.pack(fill="x", pady=12)
+        self.start_button = ttk.Button(tools, text="Start nightly run", style="Accent.TButton", command=self._start); self.start_button.pack(side="left")
+        self.pause_button = ttk.Button(tools, text="Pause", command=self._toggle_pause, state="disabled"); self.pause_button.pack(side="left", padx=6)
+        self.rescan_button = ttk.Button(tools, text="Rescan", command=self._rescan); self.rescan_button.pack(side="left", padx=6)
+        ttk.Button(tools, text="View queue", command=self._view_queue).pack(side="left", padx=6)
+        self.retry_button = ttk.Button(tools, text="Retry failures", command=self._retry_failures); self.retry_button.pack(side="left", padx=6)
+        self.reprocess_button = ttk.Button(tools, text="Reprocess changed", command=self._reprocess_changed); self.reprocess_button.pack(side="left", padx=6)
+        ttk.Button(frame, text="Select video folder…", command=self._select).pack(anchor="w")
+        ttk.Label(frame, textvariable=self.folder, style="Sub.TLabel", wraplength=580).pack(anchor="w", pady=8)
 
     def _log(self, text: str):
         self.log.configure(state="normal")
@@ -340,10 +334,18 @@ class ClippingApp(tk.Tk):
         path = filedialog.askopenfilename(title="Choose one episode", filetypes=[("Video files", "*.mp4 *.mkv *.mov *.avi *.webm *.m4v"), ("All files", "*.*")])
         if path:
             self.single_file.set(path)
+            self.source_info = None
+            self.source_streams = []
+            self.audio_track_indices = {"Choose audio track…": None}
+            self.subtitle_track_indices = {}
             try:
-                streams = probe(Path(path)).streams or []
-                self.audio_track_indices = {"Auto (default)": None}
-                choices = ["Auto (default)"]
+                info = probe(Path(path))
+                streams = info.streams or []
+                self.source_info = info
+                self.source_streams = streams
+                audio = [stream for stream in streams if stream["type"] == "audio"]
+                self.audio_track_indices = {"Choose audio track…": None}
+                choices = ["Choose audio track…"]
                 details = []
                 captions = ["Whisper transcription", "Whisper translation to English", "None"]
                 self.subtitle_track_indices = {}
@@ -359,9 +361,18 @@ class ClippingApp(tk.Tk):
                         self.subtitle_track_indices[label] = stream["index"]
                 self.audio_combo.configure(values=choices)
                 self.caption_combo.configure(values=captions)
-                self.audio_track.set(next((label for label in choices[1:] if " · default" in label), choices[0]))
+                english_matches = [stream for stream in audio if str(stream.get("language") or "").casefold() in {"en", "eng"}
+                                   or str(stream.get("language") or "").casefold().startswith("en-")]
+                selected_stream = audio[0] if len(audio) == 1 else english_matches[0] if len(english_matches) == 1 else None
+                if selected_stream:
+                    self.audio_track.set(next(label for label in choices if self.audio_track_indices.get(label) == selected_stream["index"]))
+                    self.audio_track_indices.pop("Choose audio track…", None)
+                else:
+                    self.audio_track.set(choices[0])
+                self.episode_details.set(f"{Path(path).name} · {info.duration / 60:.1f} min · {info.width}×{info.height} · {sum(s['type'] == 'video' for s in streams)} video / {len(audio)} audio stream(s)")
                 self.stream_details.set("Source streams: " + (" | ".join(details) if details else "no audio or subtitle streams"))
             except Exception as exc:
+                self.source_info = None
                 self.stream_details.set(f"Stream inspection failed: {type(exc).__name__}: {exc}")
 
     def _start_single(self):
@@ -373,16 +384,25 @@ class ClippingApp(tk.Tk):
             messagebox.showerror("Media tools unavailable", "FFmpeg, FFprobe and a verified H.264 encoder are required.", parent=self)
             return
         subtitle_filter = next((c for c in self.diagnostics["checks"] if c["name"] == "Subtitle filter"), {})
-        if subtitle_filter.get("status") != "available":
+        if self.caption_source.get() != "None" and subtitle_filter.get("status") != "available":
             messagebox.showerror("FFmpeg subtitles unavailable", "This FFmpeg build lacks the libass subtitles filter required to burn captions.", parent=self)
             return
+        needs_whisper = self.caption_source.get().startswith("Whisper")
         faster = next((item for item in self.diagnostics["checks"] if item["name"] == "Faster-Whisper"), {})
-        transcription = faster.get("status") == "available" and _whisper_model_cached(self.model.get())
-        if not transcription and not messagebox.askyesno("Continue without speech recognition?", "Whisper or its selected model is unavailable. Continue in heuristic-only mode? No model will be downloaded.", parent=self):
+        transcription = needs_whisper and faster.get("status") == "available" and _whisper_model_cached(self.model.get())
+        if needs_whisper and not transcription and not messagebox.askyesno("Continue without speech recognition?", "Whisper or its selected model is unavailable. Continue in heuristic-only mode? No model will be downloaded.", parent=self):
             return
         min_length, max_length = self._clip_lengths()
-        if not 1 <= self.count.get() <= 5 or min_length < 1 or max_length < min_length or max_length > 180:
-            messagebox.showerror("Invalid settings", "Single-episode mode supports 1–5 clips and durations up to 180 seconds.", parent=self)
+        if min_length < 1 or max_length < min_length or max_length > 180:
+            messagebox.showerror("Invalid settings", "Draft duration must be between 1 and 180 seconds.", parent=self)
+            return
+        audio_tracks = [item for item in self.source_streams if item["type"] == "audio"]
+        audio_label = self.audio_track.get()
+        if audio_tracks and (audio_label not in self.audio_track_indices or self.audio_track_indices[audio_label] is None):
+            messagebox.showerror("Choose an audio track", "Select the source audio track explicitly before generating drafts.", parent=self)
+            return
+        if self.caption_source.get().startswith("Embedded") and self.caption_source.get() not in self.subtitle_track_indices:
+            messagebox.showerror("Choose source subtitles", "Select a valid embedded subtitle stream or choose a Whisper caption mode.", parent=self)
             return
         if self.semantic.get() and not vision_installation_status().get("ready"):
             messagebox.showerror("Vision model unavailable", "Disable optional semantic analysis or use a verified local model installation.", parent=self)
@@ -393,41 +413,114 @@ class ClippingApp(tk.Tk):
         self.running = True
         self.runner = None
         self.single_start_button.configure(state="disabled")
-        self.start_button.configure(state="disabled")
         self.select_button.configure(state="disabled")
         self.cancel_button.configure(state="normal")
         self.single_cancel = threading.Event()
-        self.status.set(f"Single episode · {source.name}")
-        self.progress.configure(value=0, maximum=1)
+        self.status.set(f"Starting provisional draft job · {source.name}")
+        self.progress.start(12)
         manager = ModelManager(self.model.get(), local_files_only=True,
                                status_callback=lambda value: self.queue.put(("model_status", value)))
         vision = VisionModelManager(status_callback=lambda value: self.queue.put(("vision_status", value))) if self.semantic.get() else None
         audio_index = self.audio_track_indices.get(self.audio_track.get())
         subtitle_index = self.subtitle_track_indices.get(self.caption_source.get())
         task = "translate" if self.caption_source.get() == "Whisper translation to English" else "transcribe"
-        settings = (self.model.get(), self.count.get(), min_length, max_length, self.encoder.get(), self.semantic.get())
+        settings = (self.model.get(), 2, min_length, max_length, self.encoder.get(), self.semantic.get())
         threading.Thread(target=self._single_worker, args=(source, settings, manager, vision, transcription,
                                                            audio_index, self.caption_source.get(), task, subtitle_index), daemon=True).start()
 
     def _single_worker(self, source, settings, manager, vision, transcription, audio_index=None,
                        caption_source="Whisper transcription", transcription_task="transcribe", subtitle_index=None):
+        job_id = time.strftime("%Y%m%d-%H%M%S") + "-" + uuid.uuid4().hex[:8]
+        job_dir = OUTPUT / "jobs" / job_id
+        cache_key = hashlib.sha256(str(source.resolve()).casefold().encode("utf-8")).hexdigest()[:20]
+        cache_dir = ANALYSIS_CACHE / cache_key
+        started = time.strftime("%Y-%m-%dT%H:%M:%S%z")
+        stat = None
+        source_fingerprint = None
+        outcome = "failed"
+        count = 0
+        report = {}
         try:
+            stat = source.stat()
+            source_fingerprint = hashlib.sha256(f"{source.resolve()}|{stat.st_size}|{stat.st_mtime_ns}".encode()).hexdigest()
             def progress(message):
                 self.queue.put(("log", message))
                 self.queue.put(("status", message))
-            import time
-            output_root = OUTPUT / f"Task06C-{time.strftime('%Y%m%d-%H%M%S')}"
-            count = process_video(source, output_root, *settings[:4], self.single_cancel, progress, settings[4], manager,
+            job_dir.mkdir(parents=True, exist_ok=False)
+            count = process_video(source, job_dir, settings[0], 2, settings[2], settings[3], self.single_cancel, progress, settings[4], manager,
                                   settings[5], vision, transcription_enabled=transcription,
                                   audio_index=audio_index, caption_source=caption_source,
-                                  transcription_task=transcription_task, subtitle_index=subtitle_index)
-            self.queue.put(("single_finished", (source.name, count, _source_output_folder(source, output_root))))
+                                  transcription_task=transcription_task, subtitle_index=subtitle_index,
+                                  cache_root=cache_dir, job_output_folder=job_dir)
+            outcome = "interrupted" if self.single_cancel.is_set() else "completed"
         except Exception as exc:
-            self.queue.put(("single_failed", f"{type(exc).__name__}: {exc}"))
+            outcome = "interrupted" if self.single_cancel.is_set() or isinstance(exc, InterruptedError) else "failed"
+            report["failure"] = f"{type(exc).__name__}: {exc}"
         finally:
-            manager.release_whisper()
+            try:
+                manager.release_whisper()
+            except Exception as exc:
+                report["whisper_cleanup_error"] = f"{type(exc).__name__}: {exc}"
             if vision:
-                vision.release()
+                try:
+                    vision.release()
+                except Exception as exc:
+                    report["vision_cleanup_error"] = f"{type(exc).__name__}: {exc}"
+            manifest_path = job_dir / "analysis.json"
+            try:
+                existing = json.loads(manifest_path.read_text(encoding="utf-8")) if manifest_path.is_file() else {}
+            except (OSError, json.JSONDecodeError):
+                existing = {}
+            try:
+                info = self.source_info if self.single_file.get() == str(source) and self.source_info else probe(source)
+                source_metadata = {"duration_seconds": info.duration, "width": info.width, "height": info.height,
+                                   "video_codec": next((s.get("codec") for s in self.source_streams if s["type"] == "video"), None)}
+            except Exception as exc:
+                source_metadata = {"probe_error": str(exc)}
+            if stat is None:
+                try:
+                    stat = source.stat()
+                    source_fingerprint = hashlib.sha256(f"{source.resolve()}|{stat.st_size}|{stat.st_mtime_ns}".encode()).hexdigest()
+                except OSError:
+                    pass
+            source_size = stat.st_size if stat else None
+            source_mtime_ns = stat.st_mtime_ns if stat else None
+            clips = existing.get("clips", []) if isinstance(existing, dict) else []
+            if outcome == "interrupted":
+                count = len(clips)
+            candidate = existing.get("candidate_selection", {}) if isinstance(existing, dict) else {}
+            report.update(existing if isinstance(existing, dict) else {})
+            report.update({"schema": "clipper-personal-preview-job-v1", "job_id": job_id,
+                "job_started_at": started, "job_finished_at": time.strftime("%Y-%m-%dT%H:%M:%S%z"), "job_outcome": outcome,
+                "source": source.name, "source_path": str(source.resolve()), "source_size": source_size,
+                "source_mtime_ns": source_mtime_ns, "source_fingerprint": source_fingerprint,
+                "source_fingerprint_method": "SHA-256(resolved path, size, modification time)", **source_metadata,
+                "selected_audio_stream_index": audio_index,
+                "selected_audio_stream": next((s for s in self.source_streams if s.get("index") == audio_index), None),
+                "caption_mode": caption_source, "transcription_task": transcription_task,
+                "transcription_device": existing.get("transcription_device", "not run"),
+                "transcription_compute_type": existing.get("transcription_precision", "not run"),
+                "transcription_fallback_reason": existing.get("transcription_message") if existing.get("transcription_outcome") == "CPU_FALLBACK" else None,
+                "cache": {"analysis_signals": existing.get("analysis_cache_status", "not run"),
+                          "transcription": existing.get("transcription_cache_status", "not run"),
+                          "editorial": existing.get("editorial_analysis", {}).get("cache_hits", 0),
+                          "semantic": existing.get("semantic_analysis", {}).get("cache_hits", 0)},
+                "stage_outcomes": {"analysis_signals": existing.get("analysis_cache_status", "not run"),
+                    "transcription": existing.get("transcription_outcome", "not run"),
+                    "candidate_selection": "completed" if candidate else "not completed",
+                    "rendered_artifacts": [clip.get("validation", "not validated") for clip in clips]},
+                "candidate_count": candidate.get("candidate_count", 0), "selected_draft_count": len(clips),
+                "drafts": [{"start": clip.get("start"), "end": clip.get("end"), "filename": clip.get("filename"),
+                            "srt": Path(clip.get("filename", "")).with_suffix(".srt").name,
+                            "technical_validation": clip.get("validation", "not validated"),
+                            "mp4_exists": (job_dir / clip.get("filename", "")).is_file(),
+                            "srt_exists": (job_dir / Path(clip.get("filename", "")).with_suffix(".srt").name).is_file()}
+                           for clip in clips],
+                "selection_status": "PROVISIONAL",
+                "editorial_acceptance": "Not evaluated or accepted; outputs are provisional drafts.",
+                "job_output_directory": str(job_dir)})
+            _write_json(manifest_path, report)
+            self.queue.put(("single_finished", (source.name, count, job_dir, outcome, report)))
 
     def _rescan(self):
         if self.running:
@@ -539,7 +632,9 @@ class ClippingApp(tk.Tk):
                 parent=self)
         self._configure_local_options()
         self.running = True
-        self.progress.configure(value=0, maximum=self.target.get())
+        self.progress.stop()
+        self.progress.configure(mode="determinate", value=0, maximum=self.target.get())
+        self.single_start_button.configure(state="disabled")
         self.select_button.configure(state="disabled")
         self.rescan_button.configure(state="disabled")
         self.retry_button.configure(state="disabled")
@@ -630,6 +725,7 @@ class ClippingApp(tk.Tk):
                     self.vision_status.set(prefix + text)
                 elif kind == "finished":
                     self.running = False
+                    self.single_start_button.configure(state="normal")
                     self.start_button.configure(state="normal")
                     self.select_button.configure(state="normal")
                     self.rescan_button.configure(state="normal")
@@ -637,6 +733,8 @@ class ClippingApp(tk.Tk):
                     self.reprocess_button.configure(state="normal")
                     self.pause_button.configure(state="disabled", text="Pause")
                     self.cancel_button.configure(state="disabled")
+                    self.progress.stop()
+                    self.progress.configure(mode="indeterminate")
                     session = value["session"]
                     counts = value["queue_counts"]
                     self.status.set(f"Nightly run {session['status'].lower()} · {value['clips_prepared']} Shorts · {value['episodes_processed']} episodes ({value['episodes_skipped']} skipped, {value['episodes_failed']} failed) · {counts.get('PENDING', 0)} pending")
@@ -645,26 +743,44 @@ class ClippingApp(tk.Tk):
                         self._close_store()
                         self.destroy()
                         return
-                elif kind in {"single_finished", "single_failed"}:
+                elif kind == "single_finished":
                     self.running = False
                     self.single_start_button.configure(state="normal")
-                    self.start_button.configure(state="normal")
+                    if hasattr(self, "start_button"):
+                        self.start_button.configure(state="normal")
                     self.select_button.configure(state="normal")
                     self.cancel_button.configure(state="disabled")
-                    if kind == "single_finished":
-                        name, count, self.latest_output = value
-                        self.latest_button.configure(state="normal")
-                        self._load_review_folder(self.latest_output)
-                        self.status.set(f"Single episode complete · {name} · {count} validated clip(s)")
-                    else:
-                        self.status.set("Single episode failed · see log")
-                        self._log(value)
+                    self.progress.stop()
+                    self.progress.configure(mode="indeterminate")
+                    name, count, self.latest_output, outcome, report = value
+                    self.latest_button.configure(state="normal")
+                    self._load_review_folder(self.latest_output)
+                    actual = "validated draft" if count == 1 else "validated drafts"
+                    self.status.set(f"{outcome.title()} · {name} · {count} {actual}")
+                    self.latest_summary.set(f"{count} provisional draft(s) · job {report['job_id']} · never treated as quality-approved")
+                    if count == 0:
+                        reason = report.get("failure") or ("No candidates passed the current selection rules." if outcome == "completed" else "See the job report for the recorded reason.")
+                        self.latest_summary.set(f"No draft exported · {outcome.title()} · {reason}")
+                    for child in self.results_links.winfo_children():
+                        child.destroy()
+                    for draft in report.get("drafts", []):
+                        filename = draft.get("filename")
+                        if not isinstance(filename, str) or Path(filename).name != filename:
+                            continue
+                        row = ttk.Frame(self.results_links); row.pack(fill="x", pady=2)
+                        ttk.Label(row, text=filename, width=22).pack(side="left")
+                        if draft.get("mp4_exists"):
+                            ttk.Button(row, text="Open MP4", command=lambda f=filename: self._open_local_file(self.latest_output / f)).pack(side="left", padx=4)
+                        srt = Path(filename).with_suffix(".srt").name
+                        if draft.get("srt_exists"):
+                            ttk.Button(row, text="Open SRT", command=lambda f=srt: self._open_local_file(self.latest_output / f)).pack(side="left", padx=4)
                     if self.close_when_finished:
                         self._close_store()
                         self.destroy()
                         return
                 elif kind == "failed":
                     self.running = False
+                    self.single_start_button.configure(state="normal")
                     self.start_button.configure(state="normal")
                     self.select_button.configure(state="normal")
                     self.rescan_button.configure(state="normal")
@@ -672,6 +788,8 @@ class ClippingApp(tk.Tk):
                     self.reprocess_button.configure(state="normal")
                     self.pause_button.configure(state="disabled", text="Pause")
                     self.cancel_button.configure(state="disabled")
+                    self.progress.stop()
+                    self.progress.configure(mode="indeterminate")
                     self.status.set("Nightly run failed · see log")
                     self._log(value)
                     if self.close_when_finished:
@@ -758,7 +876,7 @@ class ClippingApp(tk.Tk):
         if self.running:
             if not messagebox.askyesno(
                 "Stop processing and close?",
-                "Clipper will stop after the current operation, keep completed clips, and offer to resume next time.",
+                "Clipper will stop safely, keep completed files, and record the interrupted job. It will not resume automatically.",
                 parent=self,
             ):
                 return
@@ -796,21 +914,11 @@ class ClippingApp(tk.Tk):
             filename = clip.get("filename")
             if not isinstance(filename, str) or Path(filename).name != filename:
                 continue
-            editorial = clip.get("editorial", {})
-            plan = clip.get("reframing", {})
-            modes = sorted({shot.get("composition", "full_frame_contain") for shot in plan.get("shots", [])})
             iid = f"clip-{index + 1}"
-            self.review_items[iid] = {**clip, "folder": folder, "editorial": editorial,
-                                      "debug_image": plan.get("debug_image")}
-            self.review_tree.insert("", "end", iid=iid, values=(filename, clip.get("category", "unknown"),
+            self.review_items[iid] = {**clip, "folder": folder}
+            self.review_tree.insert("", "end", iid=iid, values=(filename,
                 f"{clip.get('start', 0):.1f}–{clip.get('end', 0):.1f}s", f"{clip.get('duration', 0):.1f}s",
-                f"{editorial.get('editorial_score'):.2f}" if isinstance(editorial.get("editorial_score"), (int, float)) else "—",
-                ", ".join(modes) or "full_frame_contain", clip.get("caption_style", "bold_pop"),
-                clip.get("validation", clip.get("status", "unknown"))))
-        children = self.review_tree.get_children()
-        if children:
-            self.review_tree.selection_set(children[0])
-            self._review_selected()
+                clip.get("validation", clip.get("status", "not validated"))))
 
     def _selected_review_item(self):
         selected = self.review_tree.selection()
@@ -818,7 +926,7 @@ class ClippingApp(tk.Tk):
 
     def _review_selected(self, _event=None):
         item = self._selected_review_item()
-        if not item:
+        if not item or self.review_image_label is None:
             return
         thumbnail = item["folder"] / f"{Path(item['filename']).stem}_thumb.png"
         try:

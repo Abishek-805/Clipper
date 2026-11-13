@@ -284,6 +284,13 @@ def _write_manifest(path: Path, data: dict):
     temporary.replace(path)
 
 
+def _transcription_fingerprint(path: Path, settings: dict) -> str:
+    stat = path.stat()
+    values = {"source_path": str(path.resolve()), "source_size": stat.st_size,
+              "source_mtime_ns": stat.st_mtime_ns, "settings": settings}
+    return hashlib.sha256(json.dumps(values, sort_keys=True).encode("utf-8")).hexdigest()
+
+
 def _manifest_clip_path(folder: Path, filename: object) -> Path | None:
     if not isinstance(filename, str) or Path(filename).name != filename or Path(filename).suffix.lower() != ".mp4":
         return None
@@ -355,10 +362,7 @@ def transcribe(path: Path, has_audio: bool, model_size: str, cache: Path, cancel
     settings = {"model": manager.model_identity(model_size), "language": language, "task": task,
                 "audio_stream_index": audio_index, "beam_size": 5,
                 "word_timestamps": True, "vad_filter": True}
-    stat = path.stat()
-    fingerprint_data = {"source_path": str(path.resolve()), "source_size": stat.st_size,
-                        "source_mtime_ns": stat.st_mtime_ns, "settings": settings}
-    fingerprint = hashlib.sha256(json.dumps(fingerprint_data, sort_keys=True).encode("utf-8")).hexdigest()
+    fingerprint = _transcription_fingerprint(path, settings)
     if cache.exists():
         try:
             data = json.loads(cache.read_text(encoding="utf-8"))
@@ -1192,7 +1196,8 @@ def process_video(path: Path, output_root: Path, model_size: str, clip_count: in
                   should_continue: Callable[[], bool] | None = None,
                   transcription_enabled: bool = True, semantic_only: bool = False,
                   audio_index: int | None = None, caption_source: str = "whisper",
-                  transcription_task: str = "transcribe", subtitle_index: int | None = None) -> int:
+                  transcription_task: str = "transcribe", subtitle_index: int | None = None,
+                  cache_root: Path | None = None, job_output_folder: Path | None = None) -> int:
     total_started = time.perf_counter()
     stage_timings = {}
     stage_started = time.perf_counter()
@@ -1204,11 +1209,13 @@ def process_video(path: Path, output_root: Path, model_size: str, clip_count: in
         raise ValueError(f"Selected audio stream {audio_index} is not an audio stream in {path.name}")
     stage_timings["metadata_probe_seconds"] = round(time.perf_counter() - stage_started, 3)
     suffix = hashlib.sha1(str(path.resolve()).casefold().encode()).hexdigest()[:8]
-    folder = output_root / f"{re.sub(r'[^A-Za-z0-9._-]+', '_', path.stem)}_{suffix}"
+    folder = Path(job_output_folder) if job_output_folder is not None else output_root / f"{re.sub(r'[^A-Za-z0-9._-]+', '_', path.stem)}_{suffix}"
     folder.mkdir(parents=True, exist_ok=True)
     manifest_path = folder / "analysis.json"
-    cache = folder / "transcription.json"
-    analysis_cache_path = folder / "analysis_cache.json"
+    cache_folder = Path(cache_root) if cache_root is not None else folder
+    cache_folder.mkdir(parents=True, exist_ok=True)
+    cache = cache_folder / "transcription.json"
+    analysis_cache_path = cache_folder / "analysis_cache.json"
     progress(f"Analyzing {path.name}: {info.width}×{info.height}, {info.duration:.0f}s")
     source_stat = path.stat()
     context_margin = float(os.getenv("CLIPPER_CONTEXT_MARGIN", "4"))
@@ -1306,6 +1313,10 @@ def process_video(path: Path, output_root: Path, model_size: str, clip_count: in
     progress(f"Scene detection: {scene_status}")
     progress(f"Transcribing {path.name}" if info.has_audio else f"No audio track in {path.name}")
     stage_started = time.perf_counter()
+    try:
+        transcription_cache_mtime = cache.stat().st_mtime_ns
+    except OSError:
+        transcription_cache_mtime = None
     transcript = transcribe(path, info.has_audio, model_size, cache, cancel, progress, model_manager, info.duration,
                             allow_inference=transcription_enabled and caption_source.lower().startswith("whisper"),
                             audio_index=audio_index, task=transcription_task)
@@ -1353,13 +1364,15 @@ def process_video(path: Path, output_root: Path, model_size: str, clip_count: in
             editorial_summary.update(status="local_model", provider="OpenAI-compatible loopback",
                                      model=provider_model, endpoint=endpoint)
             ranked = sorted(selection["candidates"], key=lambda item: item.get("score", 0), reverse=True)[:12]
-            cache_path = folder / "editorial_cache.json"
+            cache_path = cache_folder / "editorial_cache.json"
             try:
                 editorial_cache = json.loads(cache_path.read_text(encoding="utf-8"))
             except (OSError, json.JSONDecodeError):
                 editorial_cache = {"version": "editorial-v1", "entries": {}}
             if editorial_cache.get("version") != "editorial-v1" or not isinstance(editorial_cache.get("entries"), dict):
                 editorial_cache = {"version": "editorial-v1", "entries": {}}
+            editorial_cache_hits = 0
+            editorial_cache_misses = 0
             for candidate in ranked:
                 if cancel.is_set():
                     raise InterruptedError("Processing cancelled")
@@ -1370,11 +1383,14 @@ def process_video(path: Path, output_root: Path, model_size: str, clip_count: in
                 try:
                     assessment = editorial_cache["entries"].get(key)
                     if assessment is None:
+                        editorial_cache_misses += 1
                         progress(f"Local editorial assessment · {candidate['start']:.1f}–{candidate['end']:.1f}s")
                         assessment = assess_candidate(endpoint, provider_model, words, candidate["start"],
                                                       candidate["end"], transcript.language)
                         editorial_cache["entries"][key] = assessment
                         _write_manifest(cache_path, editorial_cache)
+                    else:
+                        editorial_cache_hits += 1
                     apply_assessment(candidate, assessment)
                     candidate["editorial_category"] = assessment["category"]
                     candidate["score"] = round(.4 * candidate["score"] + .6 * assessment["editorial_score"], 4)
@@ -1396,12 +1412,14 @@ def process_video(path: Path, output_root: Path, model_size: str, clip_count: in
                 selection["rejections"].extend(rejected_editorial)
                 selection["rejections"].extend(rejected_diversity)
                 selection["rejected_count"] = len(selection["rejections"])
+            editorial_summary["cache_hits"] = editorial_cache_hits
+            editorial_summary["cache_misses"] = editorial_cache_misses
     semantic_summary = {"enabled": semantic_enabled,
                         "status": "deferred" if analysis_only and semantic_enabled else "disabled",
                         "model": None, "analyzed": 0}
     if semantic_enabled:
         vision = vision_manager or VisionModelManager()
-        semantic_cache_path = folder / "semantic_cache.json"
+        semantic_cache_path = cache_folder / "semantic_cache.json"
         semantic_cache = read_semantic_cache(semantic_cache_path)
         ranked = [candidate for candidate in selection["candidates"] if candidate.get("boundary_valid", True) and candidate.get("score", 0) >= 0.075]
         ranked = sorted(ranked, key=lambda item: item["score"], reverse=True)[:min(12, max(8, clip_count * 2))]
@@ -1417,6 +1435,7 @@ def process_video(path: Path, output_root: Path, model_size: str, clip_count: in
             key = semantic_cache_key(path, candidate, transcript_for_model, transcript.language)
             if semantic_cache["entries"].get(key) is None:
                 missing_ranked.append((candidate, transcript_for_model, key))
+        semantic_summary.update(cache_hits=len(ranked) - len(missing_ranked), cache_misses=len(missing_ranked))
         semantic_started = time.perf_counter()
         try:
             if analysis_only and not semantic_only:
@@ -1542,7 +1561,10 @@ def process_video(path: Path, output_root: Path, model_size: str, clip_count: in
                     "review_artifacts": dict(review_artifacts),
                     "queue_stage": queue_stage, "stage_timings": dict(stage_timings),
                     "stage_timings_by_pass": stage_history,
-                    "analysis_cache_status": analysis_cache_status, "scene_cuts": cuts,
+                    "analysis_cache_status": analysis_cache_status,
+                    "transcription_cache_status": "reused" if transcript.message == "transcription cache hit" else
+                        "created" if cache.is_file() and cache.stat().st_mtime_ns != transcription_cache_mtime else "not used",
+                    "scene_cuts": cuts,
                     "scene_detection_status": scene_status, "transcription_words": len(words),
                     "transcription_available": bool(words), "transcription_status": transcript.status,
                     "transcription_outcome": transcript.outcome, "transcription_model": transcript.model,

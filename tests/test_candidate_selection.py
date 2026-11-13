@@ -325,6 +325,36 @@ class CandidateSelectionTests(unittest.TestCase):
             self.assertEqual(2, cached["schema"])
             self.assertTrue(cached["motion"])
 
+    def test_personal_preview_reuses_validated_cache_across_isolated_job_outputs(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source = root / "episode.mp4"
+            source.write_bytes(b"source")
+            cache_root = root / "persistent-cache"
+            selection = {"candidate_count": 0, "rejected_count": 0, "selected_count": 0,
+                         "short_source_policy": "none", "activity_regions": [], "speech_regions": [],
+                         "candidates": [], "selected": [], "rejections": []}
+            with patch("clipper.probe", return_value=VideoInfo(120, 1920, 1080, 30, False, 0)), \
+                 patch("clipper._motion", return_value=[1.0] * 120) as motion, \
+                 patch("clipper._scene_cuts", return_value=([30.0], "1 cut")), \
+                 patch("clipper.select_clips", return_value=selection), \
+                 patch("clipper.transcribe", return_value=clipper.TranscriptionResult(
+                     None, [], "no_audio_track", "none", "none", outcome="NO_AUDIO")) as transcription:
+                job_a, job_b = root / "jobs" / "job-a", root / "jobs" / "job-b"
+                process_video(source, job_a, "tiny", 2, 20, 55, __import__("threading").Event(), lambda _message: None,
+                              cache_root=cache_root, job_output_folder=job_a)
+                process_video(source, job_b, "tiny", 2, 20, 55, __import__("threading").Event(), lambda _message: None,
+                              cache_root=cache_root, job_output_folder=job_b)
+            motion.assert_called_once()
+            self.assertTrue((job_a / "analysis.json").is_file())
+            self.assertTrue((job_b / "analysis.json").is_file())
+            self.assertFalse((job_a / "analysis_cache.json").exists())
+            self.assertEqual("created", json.loads((job_a / "analysis.json").read_text())["analysis_cache_status"])
+            self.assertEqual("reused", json.loads((job_b / "analysis.json").read_text())["analysis_cache_status"])
+            self.assertTrue((cache_root / "analysis_cache.json").is_file())
+            self.assertEqual([cache_root / "transcription.json"] * 2,
+                             [call.args[3] for call in transcription.call_args_list])
+
 
 if __name__ == "__main__":
     unittest.main()

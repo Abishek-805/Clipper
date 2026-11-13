@@ -91,6 +91,7 @@ class StartupSafetyTests(unittest.TestCase):
                 row, = app.queue_store.scan(folder, [source])
                 app.queue_store.set_episode_status(row["id"], "INTERRUPTED")
                 app.folder.set(str(folder))
+                app._open_queue_window()
                 with patch.object(main, "PREFERENCES", root / "preferences.json"), \
                      patch.object(main, "_whisper_model_cached", return_value=True), \
                      patch.object(main.messagebox, "askyesno", return_value=False) as confirm, \
