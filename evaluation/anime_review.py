@@ -70,6 +70,9 @@ def validate_dataset(data: dict) -> dict:
             raise ValueError("Corrected interval must have both bounds and positive duration")
         if row.get("notes") is not None and not isinstance(row["notes"], str):
             raise ValueError("Notes must be text")
+        for field in ("reviewer", "corrected_transcript", "unsupported_claims", "missing_context", "missing_payoff"):
+            if row.get(field) is not None and not isinstance(row[field], str):
+                raise ValueError(f"{field} must be text")
         if not isinstance(row.get("annotated_at"), str) or not row["annotated_at"]:
             raise ValueError("Each annotation needs an annotation timestamp")
     return data
