@@ -100,6 +100,7 @@ Task 06E and Task 07 have not started. The feature-branch commit and remote stat
 
 ## Git publication
 
-- Commit: pending
-- Remote feature branch: pending
-- Protected branch verification: pending
+- Implementation commit: `4c6d2b911022cb50d4b479679d1fdfaf47464407`
+- Feature branch: `feature/task-06d-multimodal-evaluation`, pushed to `origin` and verified at the implementation commit before this report-only update.
+- Protected remote branches unchanged: `main` = `1fe43b76de7c20930c34f36c6ea86696fd72c695`; `backup/task-06b-stable-20261112` = `37e6bcbcb7f9c220a265c2215fdf2709ea2323f0`.
+- No changes were pushed to `main` or the Task 06B backup.
