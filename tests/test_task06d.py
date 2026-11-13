@@ -2,10 +2,13 @@ import copy
 import json
 import tempfile
 import unittest
+from unittest.mock import patch
+from types import SimpleNamespace
 from pathlib import Path
 
-from evaluation.anime_review import (SCHEMA, build_dataset, evaluate_dataset, load_dataset,
-                                    review_candidates, save_dataset, validate_dataset)
+from evaluation.anime_review import (SCHEMA, _duplicate_similarity, build_dataset, cluster_review_candidates,
+                                    evaluate_dataset, load_dataset, review_candidates, save_dataset, validate_dataset)
+from evaluation.build_review_board import preview_command, validate_preview
 from evaluation.providers import MockVisualEventAnalyzer, validate_request, validate_result
 
 
@@ -38,10 +41,76 @@ class Task06DEvaluationTests(unittest.TestCase):
         self.assertEqual(len(selected), 36)
         regions = {(item["start"] + item["end"]) / 2 // 100 for item in selected}
         self.assertEqual(regions, {0, 1, 2, 3, 4, 5})
+        self.assertTrue(all(item["boundary_valid"] for item in selected))
+        self.assertFalse(any(_duplicate_similarity(a, b) for i, a in enumerate(selected) for b in selected[i+1:]))
         data = build_dataset(manifest, [{"word": "Hello", "start": 1, "end": 2}], 36)
         self.assertEqual(data["schema"], SCHEMA)
         self.assertEqual(data["annotations"], [])
         self.assertTrue(all(c["reviewer_label"] is None for c in data["candidates"]))
+
+    def test_temporal_clusters_deduplicate_exact_and_substantially_overlapping_intervals(self):
+        rows = [
+            {"candidate_id": "base", "start": 100, "end": 120, "score": .9, "sources": ["scene"]},
+            {"candidate_id": "exact", "start": 100, "end": 120, "score": .3, "sources": ["speech"]},
+            {"candidate_id": "partial", "start": 105, "end": 125, "score": .8, "sources": ["activity"]},
+        ]
+        clusters = cluster_review_candidates(rows)
+        self.assertEqual(len(clusters), 1)
+        self.assertEqual(clusters[0]["candidate_id"], "base")
+        self.assertEqual(clusters[0]["review_cluster_size"], 3)
+        self.assertEqual(clusters[0]["review_sources"], ["activity", "scene", "speech"])
+        self.assertGreaterEqual(_duplicate_similarity(rows[0], rows[2]), .60)
+
+    def test_temporally_close_but_distinct_events_do_not_cluster(self):
+        rows = [{"candidate_id": "first", "start": 100, "end": 110, "score": .8},
+                {"candidate_id": "second", "start": 111, "end": 121, "score": .7}]
+        self.assertEqual(len(cluster_review_candidates(rows)), 2)
+        self.assertEqual(_duplicate_similarity(*rows), 0)
+
+    def test_representative_priority_is_deterministic_and_preserves_selected_candidate(self):
+        rows = [{"candidate_id": "weak", "start": 10, "end": 30, "score": .99,
+                 "feature_scores": {"dialogue_completeness": .2}},
+                {"candidate_id": "selected", "start": 11, "end": 31, "score": .2, "selected": True,
+                 "feature_scores": {"dialogue_completeness": .9}}]
+        first = cluster_review_candidates(rows)
+        second = cluster_review_candidates(list(reversed(rows)))
+        self.assertEqual(first, second)
+        self.assertEqual(first[0]["candidate_id"], "selected")
+        self.assertEqual(first[0]["review_cluster_members"][0]["candidate_id"], "weak")
+
+    def test_preview_command_maps_only_manifest_selected_audio_and_has_silent_fallback(self):
+        command = preview_command(Path("episode.mkv"), Path("preview.mp4"), 5, 8, 2, "eng")
+        self.assertIn("0:v:0", command)
+        self.assertIn("0:2", command)
+        self.assertIn("-c:a", command)
+        self.assertIn("aac", command)
+        self.assertIn("language=eng", command)
+        self.assertNotIn("-an", command)
+        self.assertIn("-sn", command)
+        self.assertIn("-dn", command)
+        silent = preview_command(Path("episode.mkv"), Path("preview.mp4"), 5, 8, None, None)
+        self.assertIn("-an", silent)
+        self.assertNotIn("0:1", silent)
+        self.assertNotIn("0:2", silent)
+
+    def test_preview_validator_checks_streams_language_duration_and_sync(self):
+        valid = {"streams": [
+            {"codec_type": "video", "codec_name": "h264", "width": 640, "height": 360,
+             "avg_frame_rate": "12/1", "start_time": "0.000000", "duration": "8.000000"},
+            {"codec_type": "audio", "codec_name": "aac", "start_time": "0.000000", "duration": "8.020000",
+             "tags": {"language": "eng"}}], "format": {"duration": "8.020000"}}
+        with patch("evaluation.build_review_board.subprocess.run", return_value=SimpleNamespace(stdout=json.dumps(valid))):
+            self.assertTrue(validate_preview(Path("preview.mp4"), 2, "eng")["audio_available"])
+        invalid = copy.deepcopy(valid)
+        invalid["streams"][1]["tags"]["language"] = "jpn"
+        with patch("evaluation.build_review_board.subprocess.run", return_value=SimpleNamespace(stdout=json.dumps(invalid))):
+            with self.assertRaises(ValueError):
+                validate_preview(Path("preview.mp4"), 2, "eng")
+        extra = copy.deepcopy(valid)
+        extra["streams"].append({"codec_type": "subtitle", "codec_name": "ass"})
+        with patch("evaluation.build_review_board.subprocess.run", return_value=SimpleNamespace(stdout=json.dumps(extra))):
+            with self.assertRaises(ValueError):
+                validate_preview(Path("preview.mp4"), 2, "eng")
 
     def test_annotation_round_trip_and_trust_boundary_validation(self):
         data = build_dataset(fixture_manifest(), [], 10)
@@ -58,6 +127,10 @@ class Task06DEvaluationTests(unittest.TestCase):
         invalid["annotations"][0]["ratings"]["hook"] = 8
         with self.assertRaises(ValueError):
             validate_dataset(invalid)
+        moved = copy.deepcopy(data)
+        moved["annotations"][0]["source_interval"][0] += 1
+        with self.assertRaises(ValueError):
+            validate_dataset(moved)
 
     def test_metrics_wait_for_five_real_labels_and_use_only_annotation_data(self):
         data = build_dataset(fixture_manifest(), [], 10)

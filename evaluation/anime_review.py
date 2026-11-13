@@ -88,26 +88,85 @@ def load_dataset(path: Path) -> dict:
 
 
 def _signal(candidate: dict, key: str) -> float:
-    return float(candidate.get("feature_scores", {}).get(key, 0) or 0)
+    return float(candidate.get("review_feature_scores", candidate.get("feature_scores", {})).get(key, 0) or 0)
 
 
-def review_candidates(candidates: list[dict], duration: float, count: int = 36) -> list[dict]:
-    """Choose a deterministic signal-stratified set, round-robin across six episode regions."""
+def _duplicate_similarity(left: dict, right: dict) -> float:
+    """Score temporal duplicates; nearby but distinct events stay separate."""
+    ls, le = float(left["start"]), float(left["end"])
+    rs, re = float(right["start"]), float(right["end"])
+    overlap = max(0.0, min(le, re) - max(ls, rs))
+    shorter = min(le - ls, re - rs)
+    if shorter <= 0:
+        return 0.0
+    iou = overlap / (max(le, re) - min(ls, rs))
+    coverage = overlap / shorter
+    boundary_distance = min(abs(ls - rs), abs(le - re))
+    # shortcut: same broad scene is insufficient; only high IoU or high containment plus a close boundary clusters, revisit after human review.
+    duplicate = iou >= .60 or (coverage >= .80 and boundary_distance <= max(3.0, .10 * shorter))
+    return min(1.0, iou + coverage / 100) if duplicate else 0.0
+
+
+def _representative_key(candidate: dict) -> tuple:
+    features = candidate.get("feature_scores", {})
+    return (-bool(candidate.get("selected")), -bool(candidate.get("boundary_valid", True)),
+            -float(features.get("dialogue_completeness", 0) or 0),
+            -float(candidate.get("boundary_confidence", 0) or 0),
+            -float(candidate.get("score", 0) or 0), float(candidate["start"]),
+            str(candidate.get("candidate_id", "")))
+
+
+def cluster_review_candidates(candidates: list[dict]) -> list[dict]:
+    """Deterministic temporal NMS retaining each representative's proposal provenance."""
+    ranked = sorted((c for c in candidates if c.get("boundary_valid", True) and
+                     float(c.get("end", 0)) > float(c.get("start", 0))), key=_representative_key)
+    clusters: list[list[dict]] = []
+    representatives: list[dict] = []
+    for candidate in ranked:
+        similar = [(score, i) for i, rep in enumerate(representatives)
+                   if (score := _duplicate_similarity(candidate, rep)) > 0]
+        if similar:
+            _, index = max(similar, key=lambda pair: (pair[0], -pair[1]))
+            clusters[index].append(candidate)
+        else:
+            representatives.append(candidate)
+            clusters.append([candidate])
+    output = []
+    # Stable cluster IDs follow the representative's timestamp, independent of input order.
+    groups = sorted(zip(representatives, clusters), key=lambda pair: (float(pair[0]["start"]), str(pair[0].get("candidate_id", ""))))
+    for number, (representative, members) in enumerate(groups, 1):
+        item = dict(representative)
+        members = sorted(members, key=lambda c: (float(c["start"]), float(c["end"]), str(c.get("candidate_id", ""))))
+        item["review_cluster_id"] = f"cluster_{number:03}"
+        item["review_cluster_size"] = len(members)
+        item["review_start"] = min(float(m["start"]) for m in members)
+        item["review_end"] = max(float(m["end"]) for m in members)
+        item["review_cluster_members"] = [{"candidate_id": m.get("candidate_id"), "start": float(m["start"]),
+            "end": float(m["end"]), "sources": m.get("sources", []), "score": float(m.get("score", 0) or 0),
+            "selected": bool(m.get("selected")), "boundary_valid": bool(m.get("boundary_valid", True))}
+            for m in members]
+        item["review_sources"] = sorted({source for member in members for source in member.get("sources", [])})
+        keys = {key for member in members for key in member.get("feature_scores", {})}
+        item["review_feature_scores"] = {key: max(float(m.get("feature_scores", {}).get(key, 0) or 0)
+                                                       for m in members) for key in keys}
+        output.append(item)
+    return output
+
+
+def _sample_review_clusters(clusters: list[dict], duration: float, count: int) -> list[dict]:
     if count < 1 or duration <= 0:
         raise ValueError("count and duration must be positive")
     regions = [[] for _ in range(6)]
-    for candidate in candidates:
-        if not candidate.get("boundary_valid", True):
-            continue
+    for candidate in clusters:
         midpoint = (float(candidate["start"]) + float(candidate["end"])) / 2
         regions[min(5, int(midpoint / duration * 6))].append(candidate)
     chosen, seen = [], set()
     groups = (
         lambda c: bool(c.get("selected")),
-        lambda c: "speech" in c.get("sources", []) or _signal(c, "speech_density") >= .5,
+        lambda c: "speech" in c.get("review_sources", c.get("sources", [])) or _signal(c, "speech_density") >= .5,
         lambda c: _signal(c, "average_motion") >= .45 or _signal(c, "peak_motion") >= .8,
         lambda c: _signal(c, "average_audio_energy") >= .7,
-        lambda c: float(c["start"]) < 120 or float(c["end"]) > duration - 120,
+        lambda c: c.get("review_start", float(c["start"])) < 120 or c.get("review_end", float(c["end"])) > duration - 120,
         lambda c: True,
     )
     while len(chosen) < count:
@@ -132,18 +191,33 @@ def review_candidates(candidates: list[dict], duration: float, count: int = 36) 
     return chosen
 
 
+def review_candidates(candidates: list[dict], duration: float, count: int = 36) -> list[dict]:
+    """Deduplicate, then sample deterministically across six episode regions."""
+    return _sample_review_clusters(cluster_review_candidates(candidates), duration, count)
+
+
 def build_dataset(manifest: dict, words: list[dict], count: int = 36) -> dict:
     source = manifest.get("source_path") or manifest.get("source")
     size, mtime = int(manifest.get("source_size", 0)), int(manifest.get("source_mtime_ns", 0))
     duration = float(manifest.get("source_duration") or manifest.get("metadata", {}).get("duration", 0))
     selection = manifest.get("candidate_selection", {})
+    raw_candidates = selection.get("candidates", [])
+    clusters = cluster_review_candidates(raw_candidates)
+    valid_candidate_count = sum(1 for c in raw_candidates if c.get("boundary_valid", True) and float(c.get("end", 0)) > float(c.get("start", 0)))
+    sampled = _sample_review_clusters(clusters, duration, count)
+    streams = manifest.get("metadata", {}).get("streams", [])
+    audio_index = manifest.get("selected_audio_stream_index")
+    audio_stream = next((stream for stream in streams if stream.get("type") == "audio" and
+                         stream.get("index") == audio_index), None) if isinstance(audio_index, int) and not isinstance(audio_index, bool) else None
+    audio_index = audio_stream["index"] if audio_stream else None
+    audio_language = audio_stream.get("language") if audio_stream else None
     rejected = selection.get("rejections", [])
     candidates = []
-    for number, item in enumerate(review_candidates(selection.get("candidates", []), duration, count), 1):
+    for number, item in enumerate(sampled, 1):
         start, end = float(item["start"]), float(item["end"])
         match = next((r for r in rejected if abs(float(r.get("start", -9)) - start) < .1 and
                       abs(float(r.get("end", -9)) - end) < .1), None)
-        features = item.get("feature_scores", {})
+        features = item.get("review_feature_scores", item.get("feature_scores", {}))
         evidence = {key: features.get(key) for key in ("average_motion", "peak_motion", "average_audio_energy",
                     "speech_density", "dialogue_completeness", "scene_changes", "opening_hook_quality") if key in features}
         excerpt = " ".join(str(w.get("word", w.get("text", ""))).strip()
@@ -153,7 +227,7 @@ def build_dataset(manifest: dict, words: list[dict], count: int = 36) -> dict:
                         "SUSPENSE_TENSION": "Suspense", "DIALOGUE_CONFRONTATION": "Drama",
                         "TRANSFORMATION_REVEAL": "Reveal"}
         category = category_map.get(predicted, predicted if predicted in CATEGORIES else "Unclassified")
-        source_kinds = item.get("sources", [])
+        source_kinds = item.get("review_sources", item.get("sources", []))
         if item.get("selected"):
             reason = item.get("reason") or "Selected by existing Task 06C heuristic scoring"
         elif match:
@@ -163,13 +237,26 @@ def build_dataset(manifest: dict, words: list[dict], count: int = 36) -> dict:
         candidates.append({"candidate_id": f"review_{number:03}", "source_candidate_id": item.get("candidate_id"),
                            "start": start, "end": end, "duration": round(end-start, 3), "predicted_category": category,
                            "score": float(item.get("score", 0)), "selected": bool(item.get("selected")),
+                           "boundary_valid": True,
                            "sources": source_kinds, "reason": reason, "transcript_excerpt": excerpt,
-                           "evidence": evidence, "reviewer_label": None})
+                           "evidence": evidence, "reviewer_label": None,
+                           "review_cluster_id": item["review_cluster_id"],
+                           "review_cluster_size": item["review_cluster_size"],
+                           "alternate_candidates": [member for member in item["review_cluster_members"]
+                                                     if member["candidate_id"] != item.get("candidate_id")],
+                           "preview_audio_available": audio_index is not None,
+                           "audio_stream_index": audio_index, "audio_language": audio_language})
     return {"schema": SCHEMA, "schema_version": 1,
             "annotation_policy": "Human judgement only. Candidate predictions are separate; no labels are prefilled.",
             "source": {"filename": Path(source).name if source else "", "path": source,
                        "duration": duration, "fingerprint": source_fingerprint(source or "", size, mtime),
-                       "size": size, "mtime_ns": mtime},
+                       "size": size, "mtime_ns": mtime, "selected_audio_stream_index": audio_index,
+                       "audio_language": audio_language, "preview_audio_available": audio_index is not None},
+            "review_sampling": {"raw_candidate_count": len(raw_candidates), "valid_cluster_count": len(clusters),
+                                "valid_candidate_count": valid_candidate_count,
+                                "invalid_proposals_excluded": len(raw_candidates) - valid_candidate_count,
+                                "duplicate_proposals_removed": valid_candidate_count - len(clusters),
+                                "displayed_cluster_count": len(candidates)},
             "candidate_count": len(candidates), "candidates": candidates, "annotations": []}
 
 
