@@ -1,4 +1,6 @@
 import unittest
+import json
+import tempfile
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -135,6 +137,72 @@ class EpisodeBrainTests(unittest.TestCase):
         self.assertEqual("Qwen3-VL-2B-Instruct-GGUF", analyzer.model)
         with self.assertRaisesRegex(ValueError, "External inference"):
             LlamaCppVisualEventAnalyzer("http://example.com/v1/chat/completions")
+
+    def test_llama_adapter_requests_concise_json_and_disables_reasoning(self):
+        result = {"description": "A red-haired fighter swings at a large creature.", "entities": ["fighter", "creature"],
+                  "actions": ["swinging a sword"], "visual_changes": [], "emotional_cues": [], "category": "action",
+                  "confidence": 0.8, "evidence_timestamps": [2.0], "uncertainty": "The preceding action is not shown."}
+
+        class Response:
+            def __enter__(self): return self
+            def __exit__(self, *_): pass
+            def read(self): return json.dumps({"choices": [{"message": {"content": json.dumps(result)}}]}).encode()
+
+        class Opener:
+            request = None
+            def open(self, request, timeout):
+                self.request = request
+                return Response()
+
+        opener = Opener()
+        with tempfile.TemporaryDirectory() as folder:
+            frame = Path(folder) / "frame.jpg"
+            frame.write_bytes(b"local fixture")
+            with patch("evaluation.llama_cpp_vlm.build_opener", return_value=opener):
+                actual = LlamaCppVisualEventAnalyzer().analyze({"frames": [str(frame)], "timestamps": [2.0],
+                                                                 "max_tokens": 768})
+        body = json.loads(opener.request.data)
+        self.assertEqual(768, body["max_tokens"])
+        self.assertEqual("json_schema", body["response_format"]["type"])
+        self.assertTrue(body["response_format"]["json_schema"]["strict"])
+        self.assertEqual("number", body["response_format"]["json_schema"]["schema"]
+                         ["properties"]["evidence_timestamps"]["items"]["type"])
+        self.assertEqual({"enable_thinking": False}, body["chat_template_kwargs"])
+        self.assertEqual("llama.cpp-local", actual["provider"])
+
+    def test_llama_context_analysis_only_accepts_supplied_turn_ids_and_frame_times(self):
+        result = {"scene_summary": "A character follows the advice while facing an animal.",
+                  "visual_evidence": [{"timestamp": 240.0, "description": "Character beside animal."}],
+                  "dialogue_references": [{"turn_id": "beat_1", "interpretation": "Instructional advice."}],
+                  "relationships": ["The visual scene may demonstrate the instruction."],
+                  "importance": "Ordinary instructional moment; significance unknown.",
+                  "context_needed": "Later outcome is not included.", "suggested_start": 239.0,
+                  "suggested_end": 260.0, "uncertainties": ["No plot context provided."]}
+
+        class Response:
+            def __enter__(self): return self
+            def __exit__(self, *_): pass
+            def read(self): return json.dumps({"choices": [{"message": {"content": json.dumps(result)}}]}).encode()
+
+        class Opener:
+            request = None
+            def open(self, request, timeout):
+                self.request = request
+                return Response()
+
+        opener = Opener()
+        request = {"start": 239.0, "end": 245.0, "timestamps": [240.0],
+                   "visual_summaries": [{"timestamp": 240.0, "description": "Character beside animal."}],
+                   "transcript_turns": [{"turn_id": "beat_1", "start": 241.0,
+                                         "end": 244.0, "text": "Let it rip."}]}
+        with patch("evaluation.llama_cpp_vlm.build_opener", return_value=opener):
+            actual = LlamaCppVisualEventAnalyzer().analyze_context(request)
+        self.assertEqual("beat_1", actual["dialogue_references"][0]["turn_id"])
+        self.assertEqual([239.0, 260.0], actual["model_suggested_interval"])
+        self.assertEqual("FALLBACK_TO_SOURCE_WINDOW", actual["boundary_status"])
+        self.assertEqual((239.0, 245.0), (actual["suggested_start"], actual["suggested_end"]))
+        body = json.loads(opener.request.data)
+        self.assertIn("Never write or paraphrase dialogue", body["messages"][0]["content"])
 
     def test_mock_provider_explicitly_says_it_did_not_inspect_video_pixels(self):
         mock = MockVisualEventAnalyzer().analyze({"frames": ["fixture.jpg"], "timestamps": [2.0]})
