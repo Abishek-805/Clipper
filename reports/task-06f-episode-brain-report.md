@@ -114,4 +114,7 @@ The code defines `LlamaCppVisualEventAnalyzer` behind the existing `VisualEventA
 
 ## Git publication
 
-The Task 06F implementation commit and branch push are recorded here after publication. Task 06F remains an isolated prototype; do not treat this report as semantic/editorial quality acceptance or as authorization to start Task 07.
+- Implementation commit: `08c40a583fdc1e8729dc6b67bf9b3f6910bda485`.
+- Branch: `feature/task-06f-episode-brain`.
+- The branch was pushed to `origin` after all 157 tests passed. The report/status publication note is a documentation-only follow-up commit.
+- Task 06F remains an isolated prototype; do not treat this report as semantic/editorial quality acceptance or as authorization to start Task 07.
