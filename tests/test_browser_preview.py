@@ -5,7 +5,8 @@ import unittest
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
-from urllib.request import urlopen
+from urllib.error import HTTPError
+from urllib.request import Request, urlopen
 
 import browser_preview
 from browser_preview import Handler, LocalServer, _probe_source, serve
@@ -29,6 +30,13 @@ class BrowserPreviewTests(unittest.TestCase):
             page = urlopen(base + "/", timeout=3).read().decode()
             self.assertIn("Generate up to two provisional drafts", page)
             self.assertIn("Applied glossary replacements", page)
+            self.assertIn("Save &amp; Re-render Clip", page)
+            self.assertIn("data-nudge", page)
+            self.assertIn("bottom-safe", page)
+            self.assertIn("center-lower", page)
+            self.assertIn("rights not verified", page)
+            self.assertIn("overflow-wrap:anywhere", page)
+            self.assertIn("@media(max-width:650px)", page)
             status = json.loads(urlopen(base + "/api/status", timeout=3).read())
             self.assertIn("state", status)
         finally:
@@ -70,6 +78,45 @@ class BrowserPreviewTests(unittest.TestCase):
                 self.assertEqual(1, browser_preview._STATE["report"]["selected_draft_count"])
                 self.assertEqual("Kayaba", browser_preview._STATE["report"]["drafts"][0]["glossary_replacements"][0]["replacement"])
             finally:
+                browser_preview._STATE.clear()
+                browser_preview._STATE.update(previous_state)
+
+    def test_second_editor_save_is_rejected_while_rendering(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            output = Path(tmp) / "Shorts_Output"
+            job_id = "test-job"
+            job = output / "jobs" / job_id
+            job.mkdir(parents=True)
+            (job / "analysis.json").write_text("{}", encoding="utf-8")
+            previous_state = dict(browser_preview._STATE)
+            entered, release = threading.Event(), threading.Event()
+            def blocked_worker(*_args):
+                entered.set()
+                release.wait(2)
+            server = LocalServer(("127.0.0.1", 0), Handler)
+            thread = threading.Thread(target=server.serve_forever, daemon=True)
+            thread.start()
+            try:
+                browser_preview._STATE.update(state="completed", job_id=job_id, rendering=False,
+                    report={"drafts": [{"filename": "clip_001.mp4"}]})
+                base = f"http://127.0.0.1:{server.server_address[1]}"
+                body = json.dumps({"job_id": job_id, "clip_id": "clip_001.mp4", "start": 0,
+                    "end": 1, "captions": "1\n00:00:00,000 --> 00:00:01,000\nHello", "caption_position": "bottom-safe"}).encode()
+                with patch.object(browser_preview, "OUTPUT", output), patch.object(browser_preview, "_run_rerender", side_effect=blocked_worker):
+                    request = lambda: urlopen(Request(base + "/api/rerender", data=body,
+                        headers={"Content-Type": "application/json"}, method="POST"), timeout=3)
+                    self.assertEqual(202, request().status)
+                    self.assertTrue(entered.wait(1))
+                    with self.assertRaises(HTTPError) as conflict:
+                        request()
+                    self.assertEqual(409, conflict.exception.code)
+                    conflict.exception.close()
+                release.set()
+            finally:
+                release.set()
+                server.shutdown()
+                server.server_close()
+                thread.join(timeout=3)
                 browser_preview._STATE.clear()
                 browser_preview._STATE.update(previous_state)
 
