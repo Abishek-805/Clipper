@@ -376,8 +376,10 @@ class ClippingApp(tk.Tk):
                 self.stream_details.set(f"Stream inspection failed: {type(exc).__name__}: {exc}")
 
     def _start_single(self):
+        if self.running:
+            return
         source = Path(self.single_file.get())
-        if self.running or not source.is_file() or source.suffix.lower() not in {".mp4", ".mkv", ".mov", ".avi", ".webm", ".m4v"}:
+        if not source.is_file() or source.suffix.lower() not in {".mp4", ".mkv", ".mov", ".avi", ".webm", ".m4v"}:
             messagebox.showinfo("Choose one episode", "Select one supported video file first.", parent=self)
             return
         if not self.diagnostics.get("ffmpeg") or not self.diagnostics.get("ffprobe") or not any(self.diagnostics.get("encoders", {}).values()):

@@ -150,6 +150,7 @@ class ModelManagerTests(unittest.TestCase):
             with patch.dict(sys.modules, {"faster_whisper": whisper_module()}), patch("clipper._run", return_value=decoded):
                 first = transcribe(source, True, "small", cache, threading.Event(), model_manager=manager, audio_seconds=1, audio_index=0)
                 self.assertEqual("CPU_FALLBACK", first.outcome)
+                self.assertIn("fallback_reason", json.loads(cache.read_text(encoding="utf-8")))
                 saved = cache.read_bytes()
                 transcribe(source, True, "small", cache, threading.Event(), model_manager=manager, audio_seconds=1, audio_index=0)
                 self.assertEqual(1, len(FakeModel.instances[0].calls))

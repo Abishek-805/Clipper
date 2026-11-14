@@ -7,7 +7,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from captions import group_words
-from captions import choose_placement, shot_placements
+from captions import choose_placement, join_word_tokens, shot_placements
 from editorial import (QUALITY_FLOOR, WEIGHTS, apply_assessment, local_endpoint, transcript_windows,
                        validate_assessment)
 from golden_set import SCHEMA, evaluate, interval_iou, validate_labels
@@ -85,6 +85,21 @@ class Task05Tests(unittest.TestCase):
         self.assertEqual("stop.", stop_group[-1].text)
         for style in ("karaoke", "cinematic_minimal", "boxed"):
             self.assertTrue(group_words(caption_words, 0, 20, style))
+
+    def test_caption_groups_rebalance_only_contiguous_single_word_trailers(self):
+        contiguous = [SimpleNamespace(start=i * .2, end=(i + 1) * .2, text=f" word{i}") for i in range(5)]
+        contiguous.append(SimpleNamespace(start=1.0, end=1.2, text=" final."))
+        groups = group_words(contiguous, 0, 2)
+        self.assertEqual([[" word0", " word1", " word2", " word3"], [" word4", " final."]],
+                         [[word.text for word in group] for group in groups])
+        self.assertEqual((.8, 1.2), (groups[0][-1].end, groups[1][-1].end))
+
+        paused = [*contiguous[:5], SimpleNamespace(start=1.8, end=2.0, text=" alone!")]
+        self.assertEqual(1, len(group_words(paused, 0, 3)[-1]))
+
+    def test_token_join_preserves_whisper_spacing_and_punctuation(self):
+        self.assertEqual("Akihiko Kaya-la created", join_word_tokens(
+            [" Akihiko", " Kaya", "-la", " created "]))
 
     def test_shot_crop_geometry_and_portrait_obstructions(self):
         self.assertEqual([(0, 3), (3, 7), (7, 10)], shot_intervals(0, 10, [3, 7]))

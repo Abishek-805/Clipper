@@ -1,4 +1,5 @@
 import json
+import re
 import sys
 import tempfile
 import threading
@@ -8,7 +9,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 import clipper
-from clipper import TranscriptionResult, Word, _scene_cuts, _srt, parse_embedded_srt, probe, process_video, rank_clips, render, scan_videos, transcribe, validate_srt
+from clipper import TranscriptionResult, Word, _ass_text, _scene_cuts, _srt, parse_embedded_srt, probe, process_video, rank_clips, render, scan_videos, transcribe, validate_srt
 from diagnostics import collect_diagnostics, ffmpeg_path, ffprobe_path, verify_encoder
 
 
@@ -67,7 +68,7 @@ class ClipperTests(unittest.TestCase):
     def test_srt_generation_and_validation(self):
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "clip.srt"
-            path.write_text(_srt([Word(11, 11.5, " hello"), Word(11.5, 12, "world.")], 10, 20), encoding="utf-8")
+            path.write_text(_srt([Word(11, 11.5, " hello"), Word(11.5, 12, " world.")], 10, 20), encoding="utf-8")
             self.assertIn("00:00:01,000 --> 00:00:02,000", path.read_text())
             self.assertIn("hello world.", path.read_text())
             self.assertEqual(1, validate_srt(path, 10, allow_empty=False))
@@ -75,10 +76,24 @@ class ClipperTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "timestamps"):
                 validate_srt(path, 10)
 
+    def test_subtitle_formatters_preserve_whisper_token_spacing(self):
+        words = [Word(1.0, 1.3, " Akihiko"), Word(1.3, 1.6, " Kaya"),
+                 Word(1.6, 1.8, "-la"), Word(1.8, 2.1, " created")]
+        self.assertIn("Akihiko Kaya-la created", _srt(words, 0, 3))
+        ass = _ass_text(words, 0, 3)
+        visible_text = re.sub(r"\{\\kf\d+\}", "", ass)
+        self.assertIn("Akihiko Kaya-la created", visible_text)
+        self.assertNotIn("Kaya -la", visible_text)
+        ass_cues = [re.sub(r"\{[^}]*\}", "", line.split(",,")[-1]).replace(r"\N", "\n")
+                    for line in visible_text.splitlines() if line.startswith("Dialogue:")]
+        srt_cues = ["\n".join(cue.splitlines()[2:]) for cue in _srt(words, 0, 3).split("\n\n")]
+        self.assertEqual(srt_cues, ass_cues)
+
     def test_embedded_srt_cues_keep_source_times_and_split_words(self):
         words = parse_embedded_srt("1\n00:01:00,000 --> 00:01:02,000\n<font>hello world</font>\n")
-        self.assertEqual(["hello", "world"], [word.text for word in words])
+        self.assertEqual(["hello", " world"], [word.text for word in words])
         self.assertEqual((60.0, 62.0), (words[0].start, words[-1].end))
+        self.assertIn("hello world", _srt(words, 60, 62))
 
     def test_requested_caption_validation_rejects_zero_cues(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -160,7 +175,7 @@ class ClipperTests(unittest.TestCase):
             source = self._make_video(root, True)
             output = root / "cpu.mp4"
             info = probe(source)
-            words = [Word(0.25, 0.6, "hello"), Word(0.6, 1.0, "world.")]
+            words = [Word(0.25, 0.6, "hello"), Word(0.6, 1.0, " world.")]
             rendered = render(source, output, info, {"start": 0, "end": 2}, words, True, threading.Event(), "libx264")
             self.assertEqual("libx264", rendered["encoder"])
             self.assertEqual((1080, 1920, 30.0, "yuv420p"), (rendered["width"], rendered["height"], rendered["fps"], rendered["pixel_format"]))

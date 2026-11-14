@@ -14,7 +14,7 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Callable
 from diagnostics import ffmpeg_path, ffprobe_path, verify_encoder
-from captions import PRESETS, anchor_override, ass_style, group_words, shot_placements
+from captions import PRESETS, anchor_override, ass_style, group_words, join_word_tokens, shot_placements
 from reframing import PLAN_VERSION, build_reframe_plan, crop_x_expression, write_reframe_debug
 from storyboard import STORYBOARD_VERSION, write_candidate_storyboard
 from editorial import (QUALITY_FLOOR, apply_assessment, assess_candidate, local_endpoint,
@@ -437,6 +437,7 @@ def transcribe(path: Path, has_audio: bool, model_size: str, cache: Path, cancel
     )
     cache_data = {"schema": 2, "fingerprint": fingerprint, "settings": settings, "language": info.language,
                   "device": result.device, "precision": result.precision, "outcome": result.outcome,
+                  "fallback_reason": result.message if result.outcome == "CPU_FALLBACK" else None,
                   "initialization_seconds": result.initialization_seconds,
                   "transcription_seconds": result.transcription_seconds, "audio_seconds": result.audio_seconds,
                   "real_time_factor": result.real_time_factor, "vram_before": result.vram_before,
@@ -928,9 +929,12 @@ def _ass_text(words: list[Word], start: float, end: float, style: str | None = N
     events = []
     for line in group_words(words, start, end, style):
         karaoke = style != "cinematic_minimal"
-        words_text = [f"{{\\kf{max(1, round((w.end - w.start) * 100))}}}{_ass_escape(w.text)}" if karaoke
-                      else _ass_escape(w.text) for w in line]
-        text = " ".join(words_text[:4]) + ("\\N" + " ".join(words_text[4:]) if len(words_text) > 4 else "")
+        def ass_line(items):
+            prefixes = [f"{{\\kf{max(1, round((word.end - word.start) * 100))}}}" if karaoke else ""
+                        for word in items]
+            tokens = [_ass_escape(word.text) for word in items]
+            return join_word_tokens(tokens, prefixes)
+        text = ass_line(line[:4]) + ("\\N" + ass_line(line[4:]) if len(line) > 4 else "")
         midpoint = (line[0].start + line[-1].end) / 2
         anchor = next((item["anchor"] for item in placements or [] if item["start"] <= midpoint < item["end"]), None)
         override = anchor_override(anchor) if anchor else ""
@@ -960,10 +964,10 @@ def _srt(words: list[Word], start: float, end: float, style: str | None = None) 
         return f"{h:02}:{m:02}:{sec:02},{ms:03}"
     entries = []
     for i, chunk in enumerate(chunks, 1):
-        text = [w.text.replace("\n", " ").replace("\r", " ").strip() for w in chunk]
-        caption = " ".join(text[:4])
+        text = [word.text for word in chunk]
+        caption = join_word_tokens(text[:4])
         if len(text) > 4:
-            caption += "\n" + " ".join(text[4:])
+            caption += "\n" + join_word_tokens(text[4:])
         entries.append(f"{i}\n{stamp(max(0, chunk[0].start-start))} --> {stamp(min(end-start, chunk[-1].end-start))}\n{caption}")
     return "\n\n".join(entries)
 
@@ -985,7 +989,8 @@ def parse_embedded_srt(text: str) -> list[Word]:
         if not tokens or end <= start:
             continue
         step = (end - start) / len(tokens)
-        words.extend(Word(start + i * step, start + (i + 1) * step, token) for i, token in enumerate(tokens))
+        words.extend(Word(start + i * step, start + (i + 1) * step, (" " if i else "") + token)
+                     for i, token in enumerate(tokens))
     return words
 
 

@@ -44,6 +44,16 @@ def shot_placements(shots: list[dict], override: str = "auto") -> list[dict]:
     return result
 
 
+def join_word_tokens(tokens: list[str], prefixes: list[str] | None = None) -> str:
+    if not tokens:
+        return ""
+    cleaned = [token.replace("\n", " ").replace("\r", " ") for token in tokens]
+    cleaned[0] = cleaned[0].lstrip()
+    cleaned[-1] = cleaned[-1].rstrip()
+    prefixes = prefixes or [""] * len(cleaned)
+    return "".join(prefix + token for prefix, token in zip(prefixes, cleaned))
+
+
 def group_words(words: list, start: float, end: float, style: str = "bold_pop") -> list[list]:
     if style not in PRESETS:
         raise ValueError(f"Unknown caption style: {style}")
@@ -61,6 +71,17 @@ def group_words(words: list, start: float, end: float, style: str = "bold_pop") 
         current.append(word)
     if current:
         groups.append(current)
+    for index in range(1, len(groups)):
+        previous, trailing = groups[index - 1], groups[index]
+        if len(trailing) != 1 or len(previous) < 2:
+            continue
+        if trailing[0].start - previous[-1].end > .25:
+            continue
+        if any(word.text.rstrip().endswith((".", "?", "!", "…")) for word in previous[-2:]):
+            continue
+        if len(join_word_tokens([previous[-1].text, trailing[0].text])) > 36:
+            continue
+        trailing.insert(0, previous.pop())
     return groups
 
 

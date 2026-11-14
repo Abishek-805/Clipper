@@ -75,14 +75,16 @@ class PersonalPreviewTests(unittest.TestCase):
                 with patch.object(main, "_whisper_model_cached", return_value=True), \
                      patch.object(main, "ModelManager"), \
                      patch.object(main, "PREFERENCES", root / "preferences.json"), \
-                     patch.object(main.threading, "Thread") as worker:
+                     patch.object(main.threading, "Thread") as worker, \
+                     patch.object(main.messagebox, "showinfo") as showinfo:
                     app._start_single()
-                worker.assert_called_once()
-                self.assertEqual(2, worker.call_args.kwargs["args"][1][1])
-                self.assertEqual(2, worker.call_args.kwargs["args"][5])
-                self.assertEqual(5, app.count.get())  # Nightly queue's existing clip count remains unchanged.
-                app._start_single()
-                worker.assert_called_once()
+                    worker.assert_called_once()
+                    self.assertEqual(2, worker.call_args.kwargs["args"][1][1])
+                    self.assertEqual(2, worker.call_args.kwargs["args"][5])
+                    self.assertEqual(5, app.count.get())  # Nightly queue's existing clip count remains unchanged.
+                    app._start_single()
+                    worker.assert_called_once()
+                    showinfo.assert_not_called()
             finally:
                 app._close_store()
                 app.destroy()
