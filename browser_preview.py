@@ -17,6 +17,8 @@ from urllib.parse import parse_qs, unquote, urlparse
 from clipper import process_video, probe, rerender_single_clip
 from main import ANALYSIS_CACHE, APP_STATE, OUTPUT, PREFERENCES, _read_json, _whisper_model_cached, _write_json
 from model_manager import ModelManager
+from daily_workflow import manual_clip, restore_version, byte_range
+from glossary import load_glossary, glossary_path
 
 _LOCK = threading.RLock()
 _CANCEL: threading.Event | None = None
@@ -34,41 +36,7 @@ if isinstance(_saved, dict) and _saved.get("state") != "running":
 elif isinstance(_saved, dict) and _saved.get("state") == "running":
     _STATE.update(_saved, state="interrupted", status="Previous browser job was interrupted; inspect its job folder before starting again.")
 
-PAGE = r"""<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Clipper · Local Preview</title><style>
-:root{color-scheme:dark;--bg:#10141d;--panel:#191f2b;--line:#30394a;--text:#edf2fa;--muted:#aab6c9;--accent:#47d7b0}
-*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font:15px/1.5 Segoe UI,system-ui,sans-serif}
-main{max-width:980px;margin:32px auto;padding:0 20px}h1{font-size:28px;margin:0}p{color:var(--muted)}section{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:20px;margin:18px 0}
-label{display:block;color:var(--muted);font-size:13px;margin:12px 0 5px}input,select,button,textarea{font:inherit;border-radius:8px;padding:10px 12px}input,select,textarea{width:100%;color:var(--text);background:#0d1118;border:1px solid var(--line)}textarea{min-height:170px;font:12px/1.5 Consolas,monospace;resize:vertical}button{border:0;background:var(--accent);color:#07150f;font-weight:700;cursor:pointer;margin:12px 8px 0 0}button.secondary{background:#333d50;color:var(--text)}button:disabled{opacity:.5;cursor:not-allowed}.row{display:grid;grid-template-columns:1fr 1fr;gap:18px}.status{font-size:16px}.log{font:12px/1.5 Consolas,monospace;white-space:pre-wrap;max-height:180px;overflow:auto;color:#bdc9dc}video{width:min(100%,440px);aspect-ratio:9/16;background:#080b10;border-radius:10px}a{color:var(--accent);margin-right:12px}.badge{color:var(--accent)}.draft{border-top:1px solid var(--line);margin-top:22px;padding-top:18px}.filename{overflow-wrap:anywhere}.nudge{display:flex;flex-wrap:wrap;gap:4px}.nudge button{margin:4px 2px;padding:6px 9px}.editor-times{font-variant-numeric:tabular-nums;color:var(--accent)}@media(max-width:650px){.row{grid-template-columns:1fr}main{margin:16px auto}}
-</style><main><h1>Clipper · Personal Preview 0.1</h1><p>Local single-episode draft run · no upload · outputs remain on this PC</p>
-<section><strong>1 · Choose one episode</strong><label for="source">Full path to a local video</label><input id="source" placeholder="C:\\Videos\\episode.mkv">
-<button class="secondary" id="inspect">Inspect tracks</button><div class="row"><div><label for="audio">Audio track</label><select id="audio"><option>Inspect a video first</option></select></div><div><label for="captions">Captions</label><select id="captions"><option>Whisper transcription</option><option>Whisper translation to English</option><option>None</option></select></div></div>
-<button id="start" disabled>Generate up to two provisional drafts</button><button id="cancel" class="secondary" disabled>Cancel safely</button></section>
-<section><strong>2 · Processing</strong><p id="status" class="status">Choose one local video file.</p><p id="meta" class="badge"></p><p id="model" class="badge"></p><pre id="logs" class="log"></pre></section>
-<section><strong>3 · Draft results</strong><p id="result">No job run yet.</p><p>Technically ready — rights not verified. Exports remain local; confirm you have publishing rights.</p><div id="artifacts"></div></section></main>
-<script>
-const $=id=>document.getElementById(id), qs=new URLSearchParams(location.search);if(qs.has('source'))$('source').value=qs.get('source');
-async function inspect(){let source=$('source').value.trim();if(!source)return; $('inspect').disabled=true;try{let r=await fetch('/api/probe?source='+encodeURIComponent(source)),d=await r.json();if(!r.ok)throw Error(d.error||'Probe failed');$('audio').innerHTML='';for(const t of d.audio){let o=document.createElement('option');o.value=t.index;o.textContent=`${t.language||'und'} · stream #${t.index} · ${t.title||t.codec}${t.default?' · default':''}`;$('audio').append(o);if((t.language||'').toLowerCase().startsWith('en'))o.selected=true}if(!d.audio.length){let o=document.createElement('option');o.value='';o.textContent='No audio';$('audio').append(o)}$('meta').textContent=`${d.name} · ${d.duration.toFixed(1)} s · ${d.width}×${d.height} · ${d.video_codec||'video'}`;$('start').disabled=false}catch(e){$('meta').textContent=e.message;$('start').disabled=true}finally{$('inspect').disabled=false}}
-$('inspect').onclick=inspect;$('start').onclick=async()=>{try{let r=await fetch('/api/start',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({source:$('source').value.trim(),audio_index:$('audio').value===''?null:Number($('audio').value),caption_mode:$('captions').value})}),d=await r.json();if(!r.ok)throw Error(d.error||'Could not start');$('result').textContent=`Job ${d.job_id} started.`}catch(e){$('status').textContent=e.message}};$('cancel').onclick=()=>fetch('/api/cancel',{method:'POST'});
-fetch('/api/jobs').then(r=>r.json()).then(jobs=>{$('jobs').innerHTML=jobs.map(j=>'<option value="'+j.id+'">'+esc(j.source)+' · '+j.id+'</option>').join('')});$('open-job').onclick=async()=>{await fetch('/api/open-job',{method:'POST',body:JSON.stringify({job_id:$('jobs').value})});document.querySelectorAll('[data-unsaved]').forEach(x=>x.dataset.unsaved='false');renderedKey=''};
-const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-let renderedKey=''; const editKey=(job,clip)=>'clipper-edit:'+job+':'+clip;
-function clock(v){v=Math.max(0,Number(v)||0);let ms=Math.floor(v*1000),h=Math.floor(ms/3600000);ms%=3600000;let m=Math.floor(ms/60000);ms%=60000;let s=Math.floor(ms/1000);return `${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}.${String(ms%1000).padStart(3,'0')}`}
-function nudgeButtons(i,field){return [-1,-.5,.5,1].map(n=>'<button class="secondary" data-nudge="'+n+'" data-field="'+field+'-'+i+'">'+(n>0?'+':'')+n+'s</button>').join('')}
-function appliedList(x){return esc((x.glossary_replacements||[]).map(r=>r.original_text+' → '+r.replacement+' (cue '+r.cue_number+')').join('; ')||'none')}
-function drawDrafts(job,drafts){$('artifacts').innerHTML=drafts.map(function(x,i){
- const video='/files/'+encodeURIComponent(job)+'/'+encodeURIComponent(x.filename),srt='/files/'+encodeURIComponent(job)+'/'+encodeURIComponent(x.srt),status='edit-status-'+i;
- const start=Number(x.start)||0,end=Number(x.end)||0;
- return '<div class="draft"><p class="filename"><strong>'+esc(x.filename)+'</strong> · '+esc(x.technical_validation)+'</p><p>Provisional draft — rights not verified.</p><video id="clip-'+i+'" controls preload="metadata" src="'+video+'?v='+(x.edit_version||0)+'"></video><p><a href="'+srt+'">Open SRT</a> <a href="/files/'+encodeURIComponent(job)+'/analysis.json">analysis.json</a></p><div class="row"><div><label>Start · <span class="editor-times" id="start-time-'+i+'">'+clock(start)+'</span></label><input id="start-'+i+'" type="number" step="0.001" value="'+start+'"><div class="nudge">'+nudgeButtons(i,'start')+'</div></div><div><label>End · <span class="editor-times" id="end-time-'+i+'">'+clock(end)+'</span></label><input id="end-'+i+'" type="number" step="0.001" value="'+end+'"><div class="nudge">'+nudgeButtons(i,'end')+'</div></div></div><label for="captions-'+i+'">Caption cues · edit text and SRT times</label><textarea id="captions-'+i+'" spellcheck="false" placeholder="Loading SRT…"></textarea><label for="position-'+i+'">Caption position</label><select id="position-'+i+'"><option value="bottom-safe">Bottom safe</option><option value="center-lower">Center lower</option></select><label>Render quality</label><select id="preset-'+i+'"><option value="standard">Standard</option><option value="fast">Fast · softer background</option></select><button class="save-edit" data-index="'+i+'" data-clip="'+esc(x.filename)+'">Save &amp; Re-render Clip</button><span id="'+status+'" class="badge"></span><p>Applied glossary replacements: '+appliedList(x)+'</p></div>';
- }).join('')||'<p>No validated drafts in this job.</p>'
- drafts.forEach(async(x,i)=>{let area=$(`captions-${i}`);try{area.value=await(await fetch(`/files/${encodeURIComponent(job)}/${encodeURIComponent(x.srt)}`)).text()}catch{area.value='Could not load SRT.'}area.dataset.dirty='false';let saved=JSON.parse(localStorage.getItem(editKey(job,x.filename))||'null');if(saved){area.value=saved.captions??area.value;area.dataset.dirty=saved.dirty;area.dataset.unsaved='true';$(`start-${i}`).value=saved.start;$(`end-${i}`).value=saved.end;$(`position-${i}`).value=saved.position}area.oninput=()=>{area.dataset.dirty='true';area.dataset.unsaved='true'}});
- $('artifacts').querySelectorAll('[data-nudge]').forEach(b=>b.onclick=()=>{let input=$(b.dataset.field);input.value=(Number(input.value)+Number(b.dataset.nudge)).toFixed(3);input.dataset.unsaved='true';let id=input.id.startsWith('start-')?'start-time-':'end-time-';$(id+input.id.split('-').pop()).textContent=clock(input.value)});
- $('artifacts').querySelectorAll('input[type=number]').forEach(input=>input.oninput=()=>{input.dataset.unsaved='true';let id=input.id.startsWith('start-')?'start-time-':'end-time-';$(id+input.id.split('-').pop()).textContent=clock(input.value)});
- $('artifacts').oninput=()=>drafts.forEach((x,i)=>{let area=$(`captions-${i}`);localStorage.setItem(editKey(job,x.filename),JSON.stringify({start:$(`start-${i}`).value,end:$(`end-${i}`).value,captions:area.value,dirty:area.dataset.dirty,position:$(`position-${i}`).value}))});
- $('artifacts').querySelectorAll('.save-edit').forEach(button=>button.onclick=async()=>{let i=button.dataset.index,captionStatus=$(`edit-status-${i}`);button.disabled=true;captionStatus.textContent='Saving and rendering…';try{let area=$(`captions-${i}`),response=await fetch('/api/rerender',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({job_id:job,clip_id:button.dataset.clip,start:Number($(`start-${i}`).value),end:Number($(`end-${i}`).value),captions:area.dataset.dirty==='true'?area.value:null,caption_position:$(`position-${i}`).value,render_preset:$(`preset-${i}`).value})});let data=await response.json();if(!response.ok)throw Error(data.error||'Rerender failed');captionStatus.textContent='Queued…'}catch(error){captionStatus.textContent=error.message;button.disabled=false}});
-}
-async function poll(){try{let d=await(await fetch('/api/status')).json();if(!$('source').value&&d.report?.source_path){$('source').value=d.report.source_path;inspect()}$('status').textContent=d.status;$('logs').textContent=(d.logs||[]).slice(-30).join('\n');let m=d.model_status;$('model').textContent=m?`Whisper ${m.model}: ${m.device}/${m.compute_type}${m.fallback_reason?' · '+m.fallback_reason:''}`:'';$('cancel').disabled=d.state!=='running'&&!d.rendering;$('start').disabled=d.state==='running'||d.rendering||!$('meta').textContent;$('result').textContent=d.job_folder?`${d.rendering?'RENDERING EDIT':d.state.toUpperCase()} · ${d.job_folder}`:'No job run yet.';if(d.report){let e=d.report.drafts||[],key=d.job_id+JSON.stringify(e);if(key!==renderedKey&&!document.querySelector('[data-unsaved="true"]')){drawDrafts(d.job_id,e);renderedKey=key}document.querySelectorAll('.save-edit').forEach(button=>button.disabled=!!d.rendering);if(d.rerender_result){let i=e.findIndex(x=>x.filename===d.rerender_result.clip_id),target=document.getElementById(`edit-status-${i}`);if(target)target.textContent=d.rerender_result.error||`Rendered ${d.rerender_result.versioned_mp4||''}`}}}catch{}setTimeout(poll,1800)}poll();
-</script>"""
+PAGE = (Path(__file__).parent / "web" / "index.html").read_text(encoding="utf-8-sig")
 
 
 def _publish(**changes):
@@ -105,7 +73,9 @@ def _open_job(job_id: str):
     report = json.loads((folder / "analysis.json").read_text(encoding="utf-8"))
     report["drafts"] = [{"filename": c["filename"], "srt": Path(c["filename"]).with_suffix(".srt").name,
         "start": c.get("start"), "end": c.get("end"), "edit_version": len(c.get("edit_history", [])),
-        "technical_validation": c.get("validation", "PROVISIONAL")}
+        "technical_validation": c.get("validation", "PROVISIONAL"), "caption_position": c.get("caption_position"),
+        "overlays": c.get("overlays", {}), "render_preset": (c.get("render") or {}).get("render_preset", "fast"),
+        "glossary_replacements": (c.get("render") or {}).get("glossary_replacements", [])}
         for c in report.get("clips", []) if c.get("filename") and (folder / c["filename"]).is_file()]
     _publish(state="completed", report=report, job_id=job_id, job_folder=str(folder),
              rendering=False, rerender_result=None, status="Opened saved job")
@@ -203,21 +173,22 @@ def _run_job(source: Path, audio_index: int | None, caption_mode: str, job_id: s
 
 
 def _run_rerender(job_id: str, clip_id: str, start: float, end: float, captions: str, position: str,
-                  cancel: threading.Event, preset: str = "standard"):
+                  cancel: threading.Event, preset: str = "standard", overlays=None):
     global _CANCEL
     _publish(rendering=True, rerender_result=None, status=f"Re-rendering {clip_id}")
     try:
         result = rerender_single_clip(OUTPUT / "jobs" / job_id, clip_id, start, end,
-                                      captions, position, cancel=cancel, render_preset=preset)
+                                      captions, position, cancel=cancel, render_preset=preset, overlays=overlays)
         with _LOCK: report = dict(_STATE.get("report") or {})
         for draft in report.get("drafts", []):
             if draft.get("filename") == clip_id:
                 draft.update(start=start, end=end, edit_version=result["version"],
                              glossary_replacements=result.get("glossary_replacements", []))
-        _publish(report=report, rendering=False, rerender_result={**result, "clip_id": clip_id},
+        _open_job(job_id)
+        _publish(report=_STATE["report"], rendering=False, rerender_result={**result, "clip_id": clip_id},
                  status=f"Re-rendered {clip_id} · {result['rerender_seconds']:.1f}s")
     except Exception as exc:
-        _publish(rendering=False, rerender_result={"error": f"{type(exc).__name__}: {exc}"},
+        _publish(rendering=False, rerender_result={"clip_id": clip_id, "error": f"{type(exc).__name__}: {exc}"},
                  status=f"Re-render failed · {type(exc).__name__}: {exc}")
     finally:
         with _LOCK: _CANCEL = None
@@ -262,6 +233,8 @@ class Handler(BaseHTTPRequestHandler):
                         draft.setdefault("edit_version", len(clip.get("edit_history", [])))
                 snapshot["report"] = {key: report.get(key) for key in _STATUS_REPORT_FIELDS}
             return self._json(snapshot)
+        if parsed.path == "/api/glossary":
+            return self._json({"replacements": load_glossary()})
         if parsed.path == "/api/jobs":
             jobs = []
             for path in sorted((OUTPUT / "jobs").glob("*/analysis.json"), reverse=True):
@@ -287,15 +260,11 @@ class Handler(BaseHTTPRequestHandler):
             target = (root / parts[1]).resolve()
             if root not in target.parents or not root.is_relative_to((OUTPUT / "jobs").resolve()) or not target.is_file():
                 return self._json({"error": "Artifact not found"}, 404)
-            size = target.stat().st_size; start, end, status = 0, size - 1, 200
-            byte_range = self.headers.get("Range")
-            if byte_range and byte_range.startswith("bytes="):
-                try:
-                    first, last = byte_range[6:].split("-", 1); start = int(first or 0); end = min(int(last) if last else size - 1, size - 1)
-                    if start > end or start >= size: raise ValueError()
-                    status = 206
-                except ValueError:
-                    self.send_response(416); self.send_header("Content-Range", f"bytes */{size}"); self.end_headers(); return
+            size = target.stat().st_size
+            try:
+                start, end, status = byte_range(self.headers.get("Range"), size)
+            except ValueError:
+                self.send_response(416); self.send_header("Content-Range", f"bytes */{size}"); self.end_headers(); return
             self.send_response(status); self.send_header("Content-Type", mimetypes.guess_type(target.name)[0] or "application/octet-stream")
             self.send_header("Accept-Ranges", "bytes"); self.send_header("Content-Length", str(end - start + 1))
             if status == 206: self.send_header("Content-Range", f"bytes {start}-{end}/{size}")
@@ -317,6 +286,70 @@ class Handler(BaseHTTPRequestHandler):
         origin = self.headers.get("Origin")
         if origin and origin != f"http://{self.headers.get('Host', '')}":
             return self._json({"error": "Requests must originate from the local browser console."}, 403)
+        if self.path in {"/api/pick-file", "/api/manual", "/api/restore", "/api/glossary"}:
+            try:
+                body = json.loads(self.rfile.read(int(self.headers.get("Content-Length", "0"))) or b"{}")
+                with _LOCK:
+                    if _STATE.get("state") == "running" or _STATE.get("rendering"):
+                        return self._json({"error": "An operation is already running"}, 409)
+                    if self.path == "/api/pick-file":
+                        import tkinter as tk
+                        from tkinter import filedialog
+                        root = tk.Tk(); root.withdraw()
+                        try:
+                            selected = filedialog.askopenfilename(parent=root, title="Choose one episode", filetypes=[("Videos", "*.mkv *.mp4 *.mov *.avi *.webm *.m4v")])
+                        finally:
+                            root.destroy()
+                        return self._json({"source": selected})
+                    if self.path == "/api/glossary":
+                        value = body.get("replacements")
+                        if not isinstance(value, list) or len(value) > 500:
+                            raise ValueError("Expected at most 500 replacements")
+                        # Validate before replacing the user-owned glossary.
+                        import tempfile
+                        with tempfile.TemporaryDirectory() as tmp:
+                            test = Path(tmp) / "glossary.json"
+                            _write_json(test, {"replacements": value})
+                            load_glossary(test)
+                        _write_json(glossary_path(), {"replacements": value})
+                        return self._json({"ok": True})
+                    if self.path == "/api/restore":
+                        folder = _job_path(body.get("job_id"))
+                        result = restore_version(folder, body.get("clip_id"), body.get("version"))
+                        _open_job(folder.name)
+                        return self._json(result)
+                    source, info = _probe_source(body.get("source", ""))
+                    audio = body.get("audio_index")
+                    if info.has_audio and audio not in {x["index"] for x in info.streams if x.get("type") == "audio"}:
+                        raise ValueError("Select the source audio track first")
+                    from daily_workflow import interval
+                    left, right = interval(body.get("start"), body.get("end"), info.duration)
+                    mode = body.get("caption_mode", "Whisper transcription")
+                    if mode not in _ALLOWED_CAPTIONS:
+                        raise ValueError("Invalid caption mode")
+                    job_id = "manual-" + time.strftime("%Y%m%d-%H%M%S") + "-" + uuid.uuid4().hex[:8]
+                    cancel = threading.Event()
+                    _STATE.update(state="running", rendering=False, status="Creating manual interval")
+                    _CANCEL = cancel
+                    def worker():
+                        global _CANCEL
+                        try:
+                            manual_clip(source, _job_path(job_id), ANALYSIS_CACHE, audio, left, right, mode,
+                                body.get("allow_transcription") is True, cancel, body.get("render_preset", "fast"), body.get("overlays"))
+                            _open_job(job_id)
+                        except Exception as exc:
+                            _publish(state="interrupted" if cancel.is_set() else "failed", status=str(exc))
+                        finally:
+                            with _LOCK: _CANCEL = None
+                    thread = threading.Thread(target=worker, daemon=True)
+                    try:
+                        thread.start()
+                    except RuntimeError:
+                        _STATE.update(state="failed"); _CANCEL = None
+                        raise
+                    return self._json({"job_id": job_id}, 202)
+            except (OSError, ValueError, TypeError, RuntimeError) as exc:
+                return self._json({"error": str(exc)}, 400)
         if self.path == "/api/open-job":
             try:
                 body = json.loads(self.rfile.read(int(self.headers.get("Content-Length", "0"))))
@@ -342,6 +375,9 @@ class Handler(BaseHTTPRequestHandler):
                 job_id, clip_id = body.get("job_id"), body.get("clip_id")
                 start, end = float(body.get("start")), float(body.get("end"))
                 position, captions = body.get("caption_position"), body.get("captions", "")
+                overlays = body.get("overlays")
+                if overlays is not None and not isinstance(overlays, dict):
+                    raise ValueError("Invalid hook/context settings")
                 preset = body.get("render_preset", "standard")
                 if preset not in {"standard", "fast"}:
                     raise ValueError("Choose a valid render preset")
@@ -368,7 +404,7 @@ class Handler(BaseHTTPRequestHandler):
                 _CANCEL = cancel
                 _STATE.update(rendering=True, rerender_result=None, status=f"Re-rendering {clip_id}")
             thread = threading.Thread(target=_run_rerender,
-                args=(job_id, clip_id, start, end, captions, position, cancel, preset), daemon=True)
+                args=(job_id, clip_id, start, end, captions, position, cancel, preset, overlays), daemon=True)
             try:
                 thread.start()
             except RuntimeError as exc:

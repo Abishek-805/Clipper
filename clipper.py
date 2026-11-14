@@ -1217,6 +1217,17 @@ def render(path: Path, output: Path, info: VideoInfo, clip: dict, words: list[Wo
                                   placements=caption_shots, glossary=glossary,
                                   caption_cues=caption_cues,
                                   caption_position={"bottom-safe": "lower", "center-lower": "center-lower"}.get(position)), encoding="utf-8-sig")
+    if overlays:
+        margin = int(overlays.get("margin", 120))
+        if not 60 <= margin <= 400:
+            raise ValueError("Text margin must be 60–400 pixels")
+        with ass_path.open("a", encoding="utf-8") as stream:
+            for key, left, right in (("hook", 0, 2), ("context", 2, 6)):
+                text = overlays.get(key, "")
+                if not isinstance(text, str) or len(text) > 160:
+                    raise ValueError("Hook and context must be text of at most 160 characters")
+                if text.strip() and duration > left:
+                    stream.write(f"\nDialogue: 1,{_ass_time(left)},{_ass_time(min(right, duration))},Default,,{margin},{margin},{margin},,{{\\an8\\fs48}}{_ass_escape(text)}")
     try:
         filt = _render_filter(info, clip, ass_path, reframe_plan, render_preset)
         cmd = ["ffmpeg", "-y", "-ss", f"{clip['start']:.3f}", "-i", str(path), "-t", f"{duration:.3f}", "-filter_complex", filt, "-map", "[v]", "-map_metadata", "-1", "-map_chapters", "-1"]
@@ -1321,7 +1332,9 @@ def rerender_single_clip(job_dir: Path, clip_id: str, start_s: float, end_s: flo
     if caption_position not in {"bottom-safe", "center-lower"}:
         raise ValueError("Caption position must be bottom-safe or center-lower")
     caption_cues = _rerender_cues(caption_cues_or_text, start_s, end_s)
-    if caption_cues is None:
+    if caption_cues is None and (manifest.get("settings") or {}).get("caption_mode") == "None":
+        words = []
+    elif caption_cues is None:
         cache_key = hashlib.sha256(str(source).casefold().encode("utf-8")).hexdigest()[:20]
         cache_root = Path(os.environ.get("LOCALAPPDATA", Path.home())) / "Clipper" / "analysis_cache" / cache_key
         cache_path = cache_root / "transcription.json"
@@ -1354,7 +1367,7 @@ def rerender_single_clip(job_dir: Path, clip_id: str, start_s: float, end_s: flo
         started = time.perf_counter()
         result = render(source, temporary, info, {"start": start_s, "end": end_s}, words, info.has_audio,
                         cancel or threading.Event(), settings.get("encoder", "auto"), reframe_plan,
-                        clip_record.get("caption_placements"), audio_index, True, caption_cues,
+                        clip_record.get("caption_placements"), audio_index, bool(words or caption_cues), caption_cues,
                         caption_position, render_preset, overlays)
         if cancel and cancel.is_set():
             raise InterruptedError("Rerender cancelled")
@@ -1370,6 +1383,7 @@ def rerender_single_clip(job_dir: Path, clip_id: str, start_s: float, end_s: flo
         shutil.copy2(output, backup_mp4)
         try:
             shutil.copy2(old_srt, backup_srt)
+            _write_manifest(backup_mp4.with_suffix(".json"), manifest)
             os.replace(temporary, output)
             os.replace(temporary_srt, old_srt)
         except Exception:
@@ -1385,7 +1399,7 @@ def rerender_single_clip(job_dir: Path, clip_id: str, start_s: float, end_s: flo
                         "caption_text_edited": caption_cues_or_text is not None,
                         "glossary_replacements": result.get("glossary_replacements", [])})
         clip_record.update(start=start_s, end=end_s, duration=duration,
-                           caption_position=caption_position, render=result)
+                           caption_position=caption_position, overlays=overlays or {}, render=result)
         _write_manifest(manifest_path, manifest)
         return {**result, "rerender_seconds": round(time.perf_counter() - started, 3),
                 "version": version, "versioned_mp4": backup_mp4.name, "versioned_srt": backup_srt.name,
