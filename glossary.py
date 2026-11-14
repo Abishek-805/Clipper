@@ -37,15 +37,19 @@ def load_glossary(path: Path | None = None) -> list[dict]:
 def apply_replacements(text: str, replacements: list[dict], cue_number: int) -> tuple[str, list[dict]]:
     applied = []
     for entry in replacements:
-        source = re.sub(r"\s+(?=[-’'.,!?;:])", "", entry["from"])
         pattern = ""
-        for char in source:
-            pattern += r"(?:\{\\kf\d+\})*\s+" if char.isspace() else re.escape(char) + r"(?:\{\\kf\d+\})*"
+        for index, char in enumerate(entry["from"]):
+            if char.isspace():
+                following = entry["from"][index + 1:].lstrip()
+                optional = following.startswith(("-", "'", "’", ".", ",", "!", "?", ":", ";"))
+                pattern += r"(?:\{\\kf\d+\})*\s*" if optional else r"(?:\{\\kf\d+\})*\s+"
+            else:
+                pattern += re.escape(char) + r"(?:\{\\kf\d+\})*"
         if entry["whole_word"]:
             pattern = r"(?<!\w)" + pattern + r"(?!\w)"
         flags = 0 if entry["case_sensitive"] else re.IGNORECASE
         matches = [match.group(0) for match in re.finditer(pattern, text, flags=flags)]
         text = re.sub(pattern, lambda _match: entry["to"], text, flags=flags)
-        applied.extend({"original_text": original, "replacement": entry["to"], "cue_number": cue_number}
+        applied.extend({"original_text": original.replace("\n", " "), "replacement": entry["to"], "cue_number": cue_number}
                        for original in matches)
     return text, applied

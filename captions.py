@@ -50,6 +50,9 @@ def join_word_tokens(tokens: list[str], prefixes: list[str] | None = None) -> st
     cleaned = [token.replace("\n", " ").replace("\r", " ") for token in tokens]
     cleaned[0] = cleaned[0].lstrip()
     cleaned[-1] = cleaned[-1].rstrip()
+    for index in range(1, len(cleaned)):
+        if cleaned[index].lstrip().startswith(("-", "'", "’", ".", ",", "!", "?", ":", ";")):
+            cleaned[index] = cleaned[index].lstrip()
     prefixes = prefixes or [""] * len(cleaned)
     return "".join(prefix + token for prefix, token in zip(prefixes, cleaned))
 
@@ -98,7 +101,9 @@ def caption_lines(words: list) -> list[str]:
 def caption_line_break(words: list) -> int | None:
     if len(words) <= 4:
         return None
-    return min(range(1, len(words)), key=lambda n: (
+    punctuation = ("-", "'", "’", ".", ",", "!", "?", ":", ";")
+    splits = [n for n in range(1, len(words)) if not words[n].text.lstrip().startswith(punctuation)] or list(range(1, len(words)))
+    return min(splits, key=lambda n: (
         max(len(join_word_tokens([w.text for w in words[:n]])),
             len(join_word_tokens([w.text for w in words[n:]]))), abs(2 * n - len(words))))
 

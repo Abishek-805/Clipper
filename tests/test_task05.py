@@ -100,7 +100,9 @@ class Task05Tests(unittest.TestCase):
 
     def test_token_join_preserves_whisper_spacing_and_punctuation(self):
         self.assertEqual("Akihiko Kaya-la created", join_word_tokens(
-            [" Akihiko", " Kaya", "-la", " created "]))
+            [" Akihiko", " Kaya", " -la", " created "]))
+        line_words = [SimpleNamespace(text=value) for value in (" Akihiko", " Kaya", "-la", " created", " a")]
+        self.assertEqual("Akihiko Kaya-la", caption_lines(line_words)[0])
 
     def test_glossary_is_longest_first_whole_word_and_case_configurable(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -113,9 +115,9 @@ class Task05Tests(unittest.TestCase):
                 {"from": "hello", "to": "HI", "case_sensitive": True},
             ]}), encoding="utf-8")
             glossary = load_glossary(path)
-        text, applied = apply_replacements("The Nerve Gear, Kaya-la; KAIN, Kainer. Hello hello!", glossary, 3)
+        text, applied = apply_replacements("The Nerve\nGear, Kaya\n-la; KAIN, Kainer. Hello hello!", glossary, 3)
         self.assertEqual("The NerveGear, Kayaba; Klein, Kainer. Hello HI!", text)
-        self.assertEqual(["Nerve Gear", "Kaya-la", "hello", "KAIN"], [item["original_text"] for item in applied])
+        self.assertEqual(["Nerve Gear", "Kaya -la", "hello", "KAIN"], [item["original_text"] for item in applied])
         self.assertTrue(all(item["cue_number"] == 3 for item in applied))
 
     def test_missing_glossary_is_created_empty_by_default(self):

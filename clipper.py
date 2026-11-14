@@ -934,7 +934,7 @@ def _ass_text(words: list[Word], start: float, end: float, style: str | None = N
     if placement == "auto":
         placement = "lower"
     events = []
-    groups = group_words(words, start, end, style) if caption_cues is None else []
+    groups = _caption_groups(words, start, end, style, glossary) if caption_cues is None else []
     cues = ([{"start": start + cue_start, "end": start + cue_end,
               "text": "\\N".join(caption_lines(line)), "words": line}
              for line, (cue_start, cue_end) in zip(groups, cue_times(groups, start, end))]
@@ -975,13 +975,28 @@ def _ass_time(seconds: float) -> str:
     return f"{hours}:{minutes:02}:{secs:02}.{centiseconds:02}"
 
 
+def _caption_groups(words: list[Word], start: float, end: float, style: str,
+                    glossary: list[dict] | None = None) -> list[list[Word]]:
+    groups = group_words(words, start, end, style)
+    index = 0
+    while glossary and index + 1 < len(groups):
+        left, right = groups[index:index + 2]
+        combined = left + right
+        if (right[0].start - left[-1].end <= .3 and len(combined) <= 7 and
+                apply_replacements(join_word_tokens([word.text for word in combined]), glossary, 1)[1]):
+            groups[index:index + 2] = [combined]
+        else:
+            index += 1
+    return groups
+
+
 def _srt(words: list[Word], start: float, end: float, style: str | None = None,
          glossary: list[dict] | None = None, applied: list[dict] | None = None,
          caption_cues: list[dict] | None = None) -> str:
     style = style or os.getenv("CLIPPER_CAPTION_STYLE", "bold_pop")
     if style not in PRESETS:
         style = "bold_pop"
-    chunks = group_words(words, start, end, style) if caption_cues is None else []
+    chunks = _caption_groups(words, start, end, style, glossary) if caption_cues is None else []
     def stamp(s: float) -> str:
         ms = max(0, int(s * 1000)); h, ms = divmod(ms, 3600000); m, ms = divmod(ms, 60000); sec, ms = divmod(ms, 1000)
         return f"{h:02}:{m:02}:{sec:02},{ms:03}"

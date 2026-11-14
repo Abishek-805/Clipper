@@ -99,6 +99,15 @@ class ClipperTests(unittest.TestCase):
         self.assertIn("Kayaba", visible_ass)
         self.assertNotIn("Kaya-la", visible_ass)
 
+    def test_glossary_phrase_stays_together_when_caption_groups_are_rebalanced(self):
+        words = [Word(i * .2, i * .2 + .18, " " + token) for i, token in enumerate(
+            ("He", "designed", "the", "Nerve", "Gear", "rig."))]
+        glossary = [{"from": "Nerve Gear", "to": "NerveGear", "whole_word": True, "case_sensitive": False}]
+        applied = []
+        srt = _srt(words, 0, 2, glossary=glossary, applied=applied)
+        self.assertIn("NerveGear", srt)
+        self.assertEqual([{"original_text": "Nerve Gear", "replacement": "NerveGear", "cue_number": 1}], applied)
+
     def test_embedded_srt_cues_keep_source_times_and_split_words(self):
         words = parse_embedded_srt("1\n00:01:00,000 --> 00:01:02,000\n<font>hello world</font>\n")
         self.assertEqual(["hello", " world"], [word.text for word in words])
