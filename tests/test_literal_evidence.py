@@ -36,3 +36,18 @@ class LiteralEvidenceTests(unittest.TestCase):
 
     def test_unsupported_words_are_not_normalized_away(self):
         self.assertIn("quote not present after normalization", self.audit(quote="A very strong boss.")["errors"])
+
+    def test_revised_word_limit_tone_and_name_constraints(self):
+        raw = dict(scene_id="SC_0001", summary=" ".join(["word"] * 21), selected_names=["Asuna"], tones=["made up"],
+                   references=[dict(utterance_id="U_0001", quote="A mid-level boss.")])
+        result = audit_literal_response(json.dumps(raw), self.scene, self.lines, ["Klein"], revised=True)
+        self.assertIn("summary exceeds 20 words", result["errors"])
+        self.assertIn("tone outside fixed list", result["errors"])
+        self.assertIn("selection outside provided name list", result["errors"])
+
+    def test_prepositional_object_and_literal_quote_are_not_claims(self):
+        a, r = claim_violations("A journey into SAO, discussing the game.", "SAO", ["SAO"])
+        self.assertEqual(a, [])
+        a, r = claim_violations("Klein says 'You can't feel any pain.' Another statement.", "You can't feel any pain.", ["Klein"])
+        self.assertTrue(a)
+        self.assertEqual(r, [])

@@ -15,6 +15,8 @@ from urllib.request import ProxyHandler, build_opener
 
 from diagnostics import gpu_activity
 from evaluation.text_scenes import VERSION, audit_response, benchmark_metrics, request_scene, scene_lines
+from evaluation.literal_evidence import audit_literal_response, name_list, violation_metrics
+from glossary import load_glossary
 from structure import write_json
 
 
@@ -48,6 +50,9 @@ def run(args):
     command = [str(runtime), "--model", str(model), "--offline", "--no-mmproj", "--no-webui",
                "--host", "127.0.0.1", "--port", str(args.port), "--ctx-size", "4096", "--parallel", "1",
                "--n-gpu-layers", "99", "--threads", "6"]
+    if args.revised:
+        command += ["--reasoning-budget", "0", "--chat-template-kwargs", '{"enable_thinking":false}']
+    glossary = load_glossary() if args.revised else []
     samples, abort, stop = [], threading.Event(), threading.Event()
     baseline_gpu = gpu_activity()
     rows = []
@@ -58,6 +63,9 @@ def run(args):
                   command=command, rows=rows, baseline_gpu=baseline_gpu,
                   gate_rule="Complete pass; >=95% valid JSON; zero unsupported names/quotes; 100% valid IDs; source-entailment audit required",
                   status="running")
+    if args.revised:
+        result.update(version="scene-text-revised-v2", glossary=glossary,
+                      gate_rule="At least 28/32 responses pass all checks; zero attribution/relationship violations; nominations only")
     def monitor():
         while not stop.is_set():
             samples.append(gpu_activity())
@@ -102,10 +110,15 @@ def run(args):
                         row["status"] = "NOT_RUN_NO_DIALOGUE"
                     else:
                         request_started = time.perf_counter()
-                        raw, usage, timings = request_scene(endpoint + "/v1/chat/completions", model.name, scene, lines)
+                        names = name_list(lines, glossary) if args.revised else []
+                        raw, usage, timings = request_scene(endpoint + "/v1/chat/completions", model.name, scene, lines,
+                                                           revised=args.revised, allowed_names=names)
                         row.update(status="executed", seconds=round(time.perf_counter()-request_started, 3),
                                    raw_response=raw, usage=usage, server_timings=timings,
-                                   audit=audit_response(raw, scene, lines))
+                                   audit=audit_literal_response(raw, scene, lines, names, revised=True)
+                                   if args.revised else audit_response(raw, scene, lines))
+                        if args.revised:
+                            row["provided_name_list"] = names
                         print(f"{scene['id']}: {row['seconds']}s; {row['audit']['errors'] or 'literal checks passed'}", flush=True)
                     rows.append(row)
                     write_json(output / "results.json", result)
@@ -129,6 +142,12 @@ def run(args):
                       peak_system_gpu_used_mib=max((s.get("used_mib", 0) for s in samples if s.get("available")), default=None),
                       gpu_measurement_scope="System-wide dedicated VRAM, includes desktop/other applications; not per-process peak",
                       gpu_samples=len(samples), after_gpu=gpu_activity())
+        if args.revised:
+            result["metrics"].update(violation_metrics(rows))
+            metrics = result["metrics"]
+            result["gate_passed"] = (result["status"] == "completed" and metrics["executed"] == 32
+                and metrics["literal_integrity_pass_count"] >= 28
+                and metrics["attribution_violation_responses"] == metrics["relationship_violation_responses"] == 0)
         write_json(output / "results.json", result)
     print(json.dumps({k: v for k, v in result.items() if k not in ("rows", "command")}, indent=2), flush=True)
     return 0 if result["status"] == "completed" else 1
@@ -141,6 +160,7 @@ def main():
     parser.add_argument("--model", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--port", type=int, default=8778)
+    parser.add_argument("--revised", action="store_true", help="Run the continuation's constrained 20-word contract")
     parser.add_argument("--clipper-status", action="append", default=["http://127.0.0.1:8765/api/status", "http://127.0.0.1:8770/api/status"])
     raise SystemExit(run(parser.parse_args()))
 

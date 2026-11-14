@@ -5,11 +5,11 @@ import json
 import re
 import unicodedata
 
-VERSION = "literal-evidence-v2"
+VERSION = "literal-evidence-v2.1"
 TONES = ["neutral", "instruction", "exposition", "suspense", "emotional", "comedy", "confrontation", "unclear"]
 GENERIC = re.compile(r"(?i)^(?:(?:the|a|an)\s+)?(?:(?:mmo\s+)?streamer|person|character|speaker|player|npc|narrator|someone|somebody|friend|mom|mother|sister|developer|system|man|woman|other person|two people|two characters)(?:\s+[ab12])?$")
 RELATION = re.compile(r"\b(?:close(?:r|st)?|relationship|friendship|friends?|feels?|felt|wants?|wanted|wishes?|intends?|hopes?|hoped|loves?|hates?|trusts?|because|in order to|so that)\b", re.I)
-SPEECH = r"(?:says?|said|asks?|asked|explains?|explained|warns?|announces?|states?|tells?|told|replies|responds?|discuss(?:es|ing)|pleads?|begs?)"
+SPEECH = r"(?:says?|said|asks?|asked|explains?|explained|warns?|announces?|states?|tells?|told|replies|responds?|discuss(?:es|ing)?|pleads?|begs?)"
 
 
 def normalize(text):
@@ -37,6 +37,9 @@ def claim_violations(summary, source, names):
                     re.escape(name) + r"\b,?\s+who\s+(?:is|was)\b[^,.;!?]{0,65}"]
         for pattern in patterns:
             for match in re.finditer(pattern, summary, re.I):
+                # A named prepositional object is not the speaker: 'journey into SAO, discussing ...'.
+                if re.search(r"\b(?:in|into|of|about|from|for|to|called|named|game)\s+$", summary[:match.start()], re.I):
+                    continue
                 text = match.group(0)
                 if normalize(text) not in normalize(source):
                     attribution.append(text)
@@ -47,7 +50,15 @@ def claim_violations(summary, source, names):
             continue
         left, right = max(0, indexes[0]-3), min(len(tokens)-1, indexes[-1]+3)
         text = summary[tokens[left].start():tokens[right].end()].strip(".,;!?")
-        if normalize(text) not in normalize(source):
+        # Keep short literal support inside a quotation, without swallowing the following sentence.
+        supported = normalize(text) in normalize(source)
+        for lo in range(max(0, indexes[0]-3), indexes[0]+1):
+            hi = min(len(tokens)-1, lo+3)
+            if hi < indexes[-1] or hi-lo < 3:
+                continue
+            fragment = summary[tokens[lo].start():tokens[hi].end()].strip(".,;!?\"'“”‘’")
+            supported = supported or normalize(fragment) in normalize(source)
+        if not supported:
             relationships.append(text)
     return sorted(set(attribution)), sorted(set(relationships))
 

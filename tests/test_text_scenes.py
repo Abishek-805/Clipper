@@ -61,3 +61,18 @@ class TextSceneTests(unittest.TestCase):
             self.assertTrue(clipper_busy(["http://127.0.0.1:8770/api/status"]))
             response.read.return_value = b'{"state":"idle","model_status":null}'
             self.assertFalse(clipper_busy(["http://127.0.0.1:8770/api/status"]))
+
+    def test_revised_prompt_schema_and_thinking_request(self):
+        with patch("evaluation.text_scenes.build_opener") as opener:
+            response = opener.return_value.open.return_value.__enter__.return_value
+            response.read.return_value = json.dumps({"choices": [{"message": {"content": "{}"}}]}).encode()
+            _, _, metadata = request_scene("http://127.0.0.1:8778/v1/chat/completions", "local", self.scene,
+                                            self.lines, revised=True, allowed_names=["Klein"])
+            request = opener.return_value.open.call_args.args[0]
+            payload = json.loads(request.data)
+            self.assertFalse(payload["chat_template_kwargs"]["enable_thinking"])
+            schema = payload["response_format"]["json_schema"]["schema"]
+            self.assertNotIn("names", schema["properties"])
+            self.assertEqual(schema["properties"]["selected_names"]["items"]["enum"], ["Klein"])
+            self.assertFalse(metadata["reasoning_content_present"])
+            self.assertIn("AT MOST 20 WORDS", payload["messages"][0]["content"])

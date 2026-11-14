@@ -64,7 +64,7 @@ def audit_response(raw, scene, lines):
                 quote_count=len(references), fact_audit="PENDING_SOURCE_ENTAILMENT_REVIEW")
 
 
-def request_scene(endpoint, model, scene, lines, timeout=90):
+def request_scene(endpoint, model, scene, lines, timeout=90, revised=False, allowed_names=()):
     endpoint = local_endpoint(endpoint)
     if not endpoint:
         raise ValueError("An explicit loopback endpoint is required")
@@ -75,13 +75,39 @@ def request_scene(endpoint, model, scene, lines, timeout=90):
               "references: exact verbatim quote plus utterance_id supporting the summary. IDs and quotes must "
               "come from this input. No timestamps, no candidate rankings, no additional fields.\n" +
               json.dumps({"scene_id": scene["id"], "utterances": [{"id": u["id"], "text": u["text"]} for u in lines]}, ensure_ascii=False))
+    schema = SCHEMA
+    if revised:
+        from evaluation.literal_evidence import TONES
+        schema = json.loads(json.dumps(SCHEMA))
+        schema["required"].remove("names")
+        schema["required"].append("selected_names")
+        schema["properties"].pop("names")
+        schema["properties"]["selected_names"] = {"type": "array", "maxItems": min(4, len(allowed_names)),
+            "items": {"type": "string", "enum": list(allowed_names) or [""]}}
+        schema["properties"]["tones"]["items"] = {"type": "string", "enum": TONES}
+        schema["properties"]["summary"]["maxLength"] = 200
+        schema["properties"]["references"]["maxItems"] = 2
+        prompt = ("Use only the supplied dialogue. Output one factual restatement of AT MOST 20 WORDS, or 'unclear'. "
+                  "NO SPEAKER ATTRIBUTION: speakers are unknown; never assign a line or role to a named person. "
+                  "Do not write 'NAME says/asks/explains' or 'NAME, who is ...'. No relationships, friendship, "
+                  "feelings, motives or intentions unless literally stated in the supplied text. Do not guess who "
+                  "speaks, infer actions, or use outside story knowledge. selected_names is optional ([] is valid); "
+                  "choose ONLY from name_list. A name selection never identifies a speaker. Use only fixed tone "
+                  "tags, or unclear. Cite one or two supporting utterance IDs with exact source quotes. No timestamps, "
+                  "no recommendations, no extra fields. Short and cautious is better than speculation.\n" +
+                  json.dumps({"scene_id": scene["id"], "name_list": list(allowed_names), "tone_list": TONES,
+                              "utterances": [{"id": u["id"], "text": u["text"]} for u in lines]}, ensure_ascii=False))
     body = dict(model=model, messages=[dict(role="user", content=prompt)], temperature=0, max_tokens=512,
                 chat_template_kwargs={"enable_thinking": False}, response_format={"type": "json_schema",
-                    "json_schema": {"name": "text_scene", "strict": True, "schema": SCHEMA}})
+                    "json_schema": {"name": "text_scene", "strict": True, "schema": schema}})
     request = Request(endpoint, json.dumps(body).encode(), {"Content-Type": "application/json"})
     with build_opener(ProxyHandler({}), _NoRedirect()).open(request, timeout=timeout) as response:
         value = json.load(response)
-    return value["choices"][0]["message"]["content"], value.get("usage"), value.get("timings")
+    message = value["choices"][0]["message"]
+    timings = {**(value.get("timings") or {}), "thinking_disabled_requested": True,
+               "reasoning_content_present": bool(message.get("reasoning_content")),
+               "thinking_tags_present": "<think>" in (message.get("content") or "")}
+    return message["content"], value.get("usage"), timings
 
 
 def benchmark_metrics(rows):
