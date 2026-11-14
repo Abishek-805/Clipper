@@ -7,7 +7,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from captions import group_words
-from captions import choose_placement, join_word_tokens, shot_placements
+from captions import caption_lines, choose_placement, cue_times, join_word_tokens, shot_placements
 from editorial import (QUALITY_FLOOR, WEIGHTS, apply_assessment, local_endpoint, transcript_windows,
                        validate_assessment)
 from golden_set import SCHEMA, evaluate, interval_iou, validate_labels
@@ -100,6 +100,28 @@ class Task05Tests(unittest.TestCase):
     def test_token_join_preserves_whisper_spacing_and_punctuation(self):
         self.assertEqual("Akihiko Kaya-la created", join_word_tokens(
             [" Akihiko", " Kaya", "-la", " created "]))
+
+    def test_short_trailing_fragment_is_merged_without_changing_cached_words(self):
+        sample = [SimpleNamespace(start=i * .1, end=i * .1 + .08, text=f" w{i}") for i in range(5)]
+        sample.extend([SimpleNamespace(start=.5, end=.58, text=" next"),
+                       SimpleNamespace(start=.6, end=.68, text=" please.")])
+        before = [(word.start, word.end, word.text) for word in sample]
+        groups = group_words(sample, 0, 2)
+        self.assertEqual([4, 3], [len(group) for group in groups])
+        self.assertEqual(before, [(word.start, word.end, word.text) for word in sample])
+        self.assertEqual(1, len(group_words([SimpleNamespace(start=0, end=.2, text="Congratulations.")], 0, 1)))
+
+    def test_caption_cues_are_balanced_ordered_nonoverlapping_and_in_clip(self):
+        sample = [SimpleNamespace(start=i * .35, end=i * .35 + .2, text=f" word{i}") for i in range(12)]
+        groups = group_words(sample, 0, 6)
+        bounds = cue_times(groups, 0, 6)
+        self.assertTrue(all(0 <= start < end <= 6 for start, end in bounds))
+        self.assertTrue(all(left[1] <= right[0] for left, right in zip(bounds, bounds[1:])))
+        self.assertTrue(all(end - start >= .7 for start, end in bounds[:-1]))
+        lines = caption_lines(groups[0])
+        self.assertLessEqual(len(lines), 2)
+        if len(lines) == 2:
+            self.assertLessEqual(abs(len(lines[0].split()) - len(lines[1].split())), 1)
 
     def test_shot_crop_geometry_and_portrait_obstructions(self):
         self.assertEqual([(0, 3), (3, 7), (7, 10)], shot_intervals(0, 10, [3, 7]))

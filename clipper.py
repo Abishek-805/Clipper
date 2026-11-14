@@ -14,7 +14,7 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Callable
 from diagnostics import ffmpeg_path, ffprobe_path, verify_encoder
-from captions import PRESETS, anchor_override, ass_style, group_words, join_word_tokens, shot_placements
+from captions import PRESETS, anchor_override, ass_style, caption_line_break, caption_lines, cue_times, group_words, join_word_tokens, shot_placements
 from clipper_runtime.cuda_dlls import register_cuda_dll_directories
 from reframing import PLAN_VERSION, build_reframe_plan, crop_x_expression, write_reframe_debug
 from storyboard import STORYBOARD_VERSION, write_candidate_storyboard
@@ -929,18 +929,20 @@ def _ass_text(words: list[Word], start: float, end: float, style: str | None = N
     if placement == "auto":
         placement = "lower"
     events = []
-    for line in group_words(words, start, end, style):
+    groups = group_words(words, start, end, style)
+    for line, (cue_start, cue_end) in zip(groups, cue_times(groups, start, end)):
         karaoke = style != "cinematic_minimal"
         def ass_line(items):
             prefixes = [f"{{\\kf{max(1, round((word.end - word.start) * 100))}}}" if karaoke else ""
                         for word in items]
             tokens = [_ass_escape(word.text) for word in items]
             return join_word_tokens(tokens, prefixes)
-        text = ass_line(line[:4]) + ("\\N" + ass_line(line[4:]) if len(line) > 4 else "")
         midpoint = (line[0].start + line[-1].end) / 2
         anchor = next((item["anchor"] for item in placements or [] if item["start"] <= midpoint < item["end"]), None)
         override = anchor_override(anchor) if anchor else ""
-        events.append(f"Dialogue: 0,{_ass_time(max(0, line[0].start-start))},{_ass_time(min(end-start, line[-1].end-start))},Default,,0,0,0,,{override}{text.strip()}")
+        split = caption_line_break(line)
+        text = ass_line(line) if split is None else ass_line(line[:split]) + "\\N" + ass_line(line[split:])
+        events.append(f"Dialogue: 0,{_ass_time(cue_start)},{_ass_time(cue_end)},Default,,0,0,0,,{override}{text.strip()}")
     return "\n".join(["[Script Info]", "ScriptType: v4.00+", "WrapStyle: 2", "ScaledBorderAndShadow: yes", "PlayResX: 1080", "PlayResY: 1920", "[V4+ Styles]", "Format: Name,Fontname,Fontsize,PrimaryColour,SecondaryColour,OutlineColour,BackColour,Bold,Italic,Underline,StrikeOut,ScaleX,ScaleY,Spacing,Angle,BorderStyle,Outline,Shadow,Alignment,MarginL,MarginR,MarginV,Encoding", ass_style(style, placement), "[Events]", "Format: Layer,Start,End,Style,Name,MarginL,MarginR,MarginV,Effect,Text", *events])
 
 
@@ -965,12 +967,9 @@ def _srt(words: list[Word], start: float, end: float, style: str | None = None) 
         ms = max(0, int(s * 1000)); h, ms = divmod(ms, 3600000); m, ms = divmod(ms, 60000); sec, ms = divmod(ms, 1000)
         return f"{h:02}:{m:02}:{sec:02},{ms:03}"
     entries = []
-    for i, chunk in enumerate(chunks, 1):
-        text = [word.text for word in chunk]
-        caption = join_word_tokens(text[:4])
-        if len(text) > 4:
-            caption += "\n" + join_word_tokens(text[4:])
-        entries.append(f"{i}\n{stamp(max(0, chunk[0].start-start))} --> {stamp(min(end-start, chunk[-1].end-start))}\n{caption}")
+    for i, (chunk, (cue_start, cue_end)) in enumerate(zip(chunks, cue_times(chunks, start, end)), 1):
+        caption = "\n".join(caption_lines(chunk))
+        entries.append(f"{i}\n{stamp(cue_start)} --> {stamp(cue_end)}\n{caption}")
     return "\n\n".join(entries)
 
 

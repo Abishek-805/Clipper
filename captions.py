@@ -73,16 +73,45 @@ def group_words(words: list, start: float, end: float, style: str = "bold_pop") 
         groups.append(current)
     for index in range(1, len(groups)):
         previous, trailing = groups[index - 1], groups[index]
-        if len(trailing) != 1 or len(previous) < 2:
+        fragment_duration = trailing[-1].end - trailing[0].start
+        if not 1 <= len(trailing) <= 2 or fragment_duration >= .5 or len(previous) < 2:
             continue
-        if trailing[0].start - previous[-1].end > .25:
+        if trailing[0].start - previous[-1].end > .3:
             continue
-        if any(word.text.rstrip().endswith((".", "?", "!", "…")) for word in previous[-2:]):
+        if previous[-1].text.rstrip().endswith((".", "?", "!", "…")):
             continue
-        if len(join_word_tokens([previous[-1].text, trailing[0].text])) > 36:
+        if len(previous) + len(trailing) > 7 or len(join_word_tokens([previous[-1].text, *[word.text for word in trailing]])) > 36:
             continue
-        trailing.insert(0, previous.pop())
+        trailing[:0] = previous[-1:]
+        del previous[-1:]
     return groups
+
+
+def caption_lines(words: list) -> list[str]:
+    split = caption_line_break(words)
+    if split is None:
+        return [join_word_tokens([word.text for word in words])]
+    return [join_word_tokens([word.text for word in words[:split]]),
+            join_word_tokens([word.text for word in words[split:]])]
+
+
+def caption_line_break(words: list) -> int | None:
+    if len(words) <= 4:
+        return None
+    return min(range(1, len(words)), key=lambda n: (
+        max(len(join_word_tokens([w.text for w in words[:n]])),
+            len(join_word_tokens([w.text for w in words[n:]]))), abs(2 * n - len(words))))
+
+
+def cue_times(groups: list[list], start: float, end: float, minimum: float = .7) -> list[tuple[float, float]]:
+    duration = end - start
+    bounds = [(max(0.0, group[0].start - start), min(duration, group[-1].end - start)) for group in groups]
+    for index, (cue_start, cue_end) in enumerate(bounds):
+        next_start = bounds[index + 1][0] if index + 1 < len(bounds) else duration
+        cue_start = max(cue_start, bounds[index - 1][1] if index else 0.0)
+        cue_end = min(next_start, max(cue_end, min(duration, cue_start + minimum)))
+        bounds[index] = (cue_start, max(cue_start, cue_end))
+    return bounds
 
 
 def ass_style(style: str = "bold_pop", placement: str = "lower") -> str:
