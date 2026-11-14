@@ -1,5 +1,15 @@
 # Clipper implementation status
 
+## Sprint 3B continuation — Reference review delivered; revised 2B gate failed (2026-11-14)
+
+- Same branch `feature/personal-v1-understanding-3b`, verified baseline `0921111677c788a9602a30e0c20df684ef2034b4`. A: `31b2e71`; B: `38a2a9e`; C implementation: `5359794110bb0d5aec963ccb739039ec9cdce808`, pushed and remote-verified.
+- No-model re-score recognizes generic roles and case/whitespace/dash equivalence. Original run changes from 7/32 to **25/32** passing; literal attribution/relationship flags remain in 4/4 responses. This corrects the earlier checker interpretation; the 43 generic labels were not invented character identities.
+- Revised schema/prompt, same cached scenes and installed text-only 2B: **11/32** passing with final v2.1 checks, 14 attribution and 1 relationship/motive response flags, two quote mismatches, ten overlong summaries. JSON/IDs remain valid. Thinking disabled in request/server, no reasoning text observed. 75.069 s total; 2734 MiB peak system-wide GPU use. **Gate failed; Phase D skipped.** Production selector/manual rendering remain unchanged; no download occurred.
+- Delivered owner-reference proposals, playback proxies, edited times, Confirm/Reject, source-bound persistence/reload and JSON access. The owner explicitly confirmed **727.510–776.670** (game-master rules) and **207.590–249.020** (training activation); these two entries are versioned in the reference template and saved locally. Four other proposals remain unconfirmed. Task 06I full independent episode review is still incomplete.
+- Copied-cache spot-check at temporal IoU ≥0.30: unfiltered and 3A selections miss both references; the old tutorial draft has partial IoU 0.170. New model selector NOT RUN because the gate failed. These are two personal references, not general editorial accuracy.
+- Baseline **277 + 9 subtests**; final **293 passed + 9 subtests, 0 failed/skipped**. 22 Playwright/browser checks passed. Compilation/diff and original cache/source/raw-result integrity checks passed. Audio language/perceptual sync are not newly accepted by metadata or reference confirmation.
+- [One-page continuation report](understanding-3b-continuation-report.md) · [Complete metrics, failures, proposals and spot-check evidence](understanding-3b-continuation-evidence.json).
+
 ## Sprint 3B — Subtitle confirmation delivered; model gate failed (2026-11-14)
 
 - Branch `feature/personal-v1-understanding-3b` from verified 3A remote `bf5077f1f826759f14ef6deb9a48cfb089ac8d84`. Phase 0 commit `1d23468`; benchmark implementation `a07f252adcfe5ab0a1f726a9de55a7f6abb20683`, pushed and remote-verified.

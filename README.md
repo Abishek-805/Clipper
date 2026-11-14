@@ -88,4 +88,14 @@ Whisper remains the default for captions. **Use release subtitles for captions**
 
 Within Episode exclusions, expand **Review subtitle #…** to inspect five source dialogue samples. **Use as English dialogue** saves your explicit confirmation for that source hash and stream; **Not dialogue** excludes the track as a plot source, and **Clear decision** restores heuristic assessment. A confirmation can resolve incorrect language tags. Multiple positive confirmations still require a unique choice. This changes future source assessment, not existing jobs or your caption-mode selection.
 
-Sprint 3B's text-only experiment failed its required evidence contract. The production selector remains the Sprint 3A selector; no new semantic selection is enabled. See the [Phase 1 gate report](reports/understanding-3b-report.md) before approving any larger-model download. Timed owner reference moments remain pending in `evaluation/known_moments/s01-e01.json`; previous selector intervals are not human labels.
+Sprint 3B's original text-only experiment failed its required evidence contract. The production selector remains the Sprint 3A selector; no new semantic selection is enabled. The [original Phase 1 report](reports/understanding-3b-report.md) records that baseline; the continuation below records the revised experiment and newly confirmed owner references. Previous selector intervals are not human labels.
+
+### Owner reference review
+
+The [continuation experiment](reports/understanding-3b-continuation-report.md) also failed its gate; no new model selector is enabled. Two source intervals are now explicitly owner-confirmed in `evaluation/known_moments/s01-e01.json`.
+
+Choose and inspect the source, select its audio, then expand **Owner reference moments → Find proposed intervals** below the draft editor. This searches matching cached dialogue without starting a model or transcription. Play a landscape proxy, edit source seconds, and choose **Confirm reference** or **Reject**. Saving edited times keeps the interval PROPOSED until confirmed again. Existing owner-confirmed template entries are imported; subsequent local decisions take precedence.
+
+Reference JSON and small previews live under ignored `Shorts_Output/Review/<source-sha256>/`. Open the JSON link after saving to export your dataset. Preview timestamps are approximate source offsets, not frame-accuracy guarantees. Missing cached dialogue produces an explicit error. Source mismatches cannot reuse labels; changed text matches do not delete saved owner references. This workspace is separate from the blind Task 06I benchmark.
+
+`tests/ui-known-moments.cjs` supplements the existing browser regression script. Set `CLIPPER_REVIEW_SOURCE`, `CLIPPER_UI_URL` and `CLIPPER_PLAYWRIGHT_MODULE` against an isolated server/cache. It tests loading, hidden/visible preview states, playback and seeking; it never clicks Confirm, Reject or Save on real media.

@@ -1,0 +1,1364 @@
+{
+  "branch": "feature/personal-v1-understanding-3b",
+  "baseline": "0921111677c788a9602a30e0c20df684ef2034b4",
+  "source_hash": "28982060e5dcf4e743c7448859f1319b1726338d91c387f0bac15277360c0476",
+  "validator_version": "literal-evidence-v2.1",
+  "original_metrics": {
+    "executed": 32,
+    "json_valid_rate": 1.0,
+    "literal_integrity_pass_count": 7,
+    "unsupported_name_rate": 0.5972222222222222,
+    "name_count": 72,
+    "unsupported_quote_rate": 0.010416666666666666,
+    "quote_count": 96,
+    "valid_id_rate": 1.0,
+    "reference_count": 128,
+    "invented_fact_rate": null,
+    "fact_audit": "PENDING_SOURCE_ENTAILMENT_REVIEW"
+  },
+  "original_rescored_metrics": {
+    "executed": 32,
+    "json_valid_rate": 1.0,
+    "literal_integrity_pass_count": 25,
+    "unsupported_name_rate": 0.0,
+    "name_count": 17,
+    "unsupported_quote_rate": 0.0,
+    "quote_count": 96,
+    "valid_id_rate": 1.0,
+    "reference_count": 128,
+    "invented_fact_rate": null,
+    "fact_audit": "PENDING_SOURCE_ENTAILMENT_REVIEW",
+    "attribution_violation_responses": 4,
+    "relationship_violation_responses": 4,
+    "generic_label_entries": 43,
+    "unsupported_proper_name_entries": 0,
+    "normalization_records": 91
+  },
+  "revised_metrics": {
+    "executed": 32,
+    "json_valid_rate": 1.0,
+    "literal_integrity_pass_count": 11,
+    "unsupported_name_rate": 0.0,
+    "name_count": 72,
+    "unsupported_quote_rate": 0.03571428571428571,
+    "quote_count": 56,
+    "valid_id_rate": 1.0,
+    "reference_count": 88,
+    "invented_fact_rate": null,
+    "fact_audit": "PENDING_SOURCE_ENTAILMENT_REVIEW",
+    "attribution_violation_responses": 14,
+    "relationship_violation_responses": 1,
+    "generic_label_entries": 0,
+    "unsupported_proper_name_entries": 0,
+    "normalization_records": 52
+  },
+  "gate_passed": false,
+  "gate_rule": "At least 28/32 passing all checks AND zero attribution and relationship/motive flags",
+  "failures": [
+    {
+      "scene_id": "SC_0003",
+      "summary": "Kayaba and Klein discuss hardware possibilities, with Klein leaving to practice.",
+      "errors": [
+        "unsupported named-speaker attribution"
+      ],
+      "attribution_text": [
+        "Klein discuss"
+      ],
+      "relationship_text": [],
+      "quote_evidence": []
+    },
+    {
+      "scene_id": "SC_0005",
+      "summary": "Klein says 'You can't feel any pain.' Remember asks 'The first move is the most important.'",
+      "errors": [
+        "unsupported named-speaker attribution"
+      ],
+      "attribution_text": [
+        "Klein says",
+        "Remember asks"
+      ],
+      "relationship_text": [],
+      "quote_evidence": []
+    },
+    {
+      "scene_id": "SC_0006",
+      "summary": "Initial asks about Initial motion, Kayaba and Klein discuss system guaranteeing target hit.",
+      "errors": [
+        "unsupported named-speaker attribution"
+      ],
+      "attribution_text": [
+        "Initial asks",
+        "Klein discuss"
+      ],
+      "relationship_text": [],
+      "quote_evidence": []
+    },
+    {
+      "scene_id": "SC_0007",
+      "summary": "Right asks when skills activate, then asks to drive home.",
+      "errors": [
+        "unsupported named-speaker attribution"
+      ],
+      "attribution_text": [
+        "Right asks"
+      ],
+      "relationship_text": [],
+      "quote_evidence": []
+    },
+    {
+      "scene_id": "SC_0010",
+      "summary": "Kayaba asks about the fun of moving while fighting, Klein responds affirmatively, and the group continues moving forward. The dialogue includes a question and a response, with a continuation of the ex",
+      "errors": [
+        "unsupported named-speaker attribution",
+        "summary exceeds 20 words"
+      ],
+      "attribution_text": [
+        "Kayaba asks",
+        "Klein responds"
+      ],
+      "relationship_text": [],
+      "quote_evidence": []
+    },
+    {
+      "scene_id": "SC_0011",
+      "summary": "A player reflects on their journey into SAO, discussing their first full dive, beta testing, and newfound sense of freedom in a virtual world.",
+      "errors": [
+        "summary exceeds 20 words"
+      ],
+      "attribution_text": [],
+      "relationship_text": [],
+      "quote_evidence": []
+    },
+    {
+      "scene_id": "SC_0012",
+      "summary": "A character expresses hunger, mentions a pizza order, and discusses meeting others from another game, with a brief exchange of gratitude and a promise of repayment.",
+      "errors": [
+        "quote not present after normalization",
+        "summary exceeds 20 words"
+      ],
+      "attribution_text": [],
+      "relationship_text": [],
+      "quote_evidence": [
+        {
+          "utterance_id": "U_0091",
+          "quote": "That's why I ordered a pizza for 5 .30.",
+          "source": "Too bad the food you eat here only satisfies your hunger virtually."
+        },
+        {
+          "utterance_id": "U_0100",
+          "quote": "No, it's cool if you don't want to.",
+          "source": "No, it's cool if you don't want to."
+        }
+      ]
+    },
+    {
+      "scene_id": "SC_0014",
+      "summary": "A player in SAO reports a login issue, stating that the Game Master is unreachable and that the only way to log out is through the menu, which is not working. The player is frustrated and asks for an ",
+      "errors": [
+        "summary exceeds 20 words"
+      ],
+      "attribution_text": [],
+      "relationship_text": [],
+      "quote_evidence": []
+    },
+    {
+      "scene_id": "SC_0015",
+      "summary": "The conversation discusses a game bug affecting the nerve gear, with one speaker expressing concern about the situation and another suggesting it's a serious issue. The dialogue includes a discussion,",
+      "errors": [
+        "summary exceeds 20 words"
+      ],
+      "attribution_text": [],
+      "relationship_text": [],
+      "quote_evidence": []
+    },
+    {
+      "scene_id": "SC_0018",
+      "summary": "Akihiko Kaya explains the game's security, stating that removing the nerve gear is impossible and that players are deleted if their HP drops to zero.",
+      "errors": [
+        "unsupported named-speaker attribution",
+        "summary exceeds 20 words"
+      ],
+      "attribution_text": [
+        "Akihiko Kaya explains"
+      ],
+      "relationship_text": [],
+      "quote_evidence": []
+    },
+    {
+      "scene_id": "SC_0019",
+      "summary": "A player is told to clear the game by defeating a boss on floor 100, but the speaker questions the validity of the claim, suggesting disbelief in the statement.",
+      "errors": [
+        "summary exceeds 20 words"
+      ],
+      "attribution_text": [],
+      "relationship_text": [],
+      "quote_evidence": []
+    },
+    {
+      "scene_id": "SC_0022",
+      "summary": "Akihiko Kaya explains the nerve gear's data capture mechanism, referencing the scan and calibration process.",
+      "errors": [
+        "quote not present after normalization",
+        "unsupported named-speaker attribution"
+      ],
+      "attribution_text": [
+        "Akihiko Kaya explains"
+      ],
+      "relationship_text": [],
+      "quote_evidence": [
+        {
+          "utterance_id": "U_0253",
+          "quote": "There's a high density signal device inside the nerve gear rig.",
+          "source": "There's a high density signal device inside the nerve gear rig."
+        },
+        {
+          "utterance_id": "U_0255",
+          "quote": "It asked you to touch your body all over like this, remember?",
+          "source": "When you first put the nerve gear on, it had to do this calibration thing."
+        }
+      ]
+    },
+    {
+      "scene_id": "SC_0023",
+      "summary": "Kayaba announces tutorial end and wishes players luck.",
+      "errors": [
+        "unsupported named-speaker attribution",
+        "unsupported relationship/motive claim"
+      ],
+      "attribution_text": [
+        "Kayaba announces"
+      ],
+      "relationship_text": [
+        "tutorial end and wishes players luck"
+      ],
+      "quote_evidence": []
+    },
+    {
+      "scene_id": "SC_0024",
+      "summary": "Akihiko Kaya created a virtual world and designed the Nerve Gear rig. The speaker states he knows and believes the man is a genius, and that if he dies in the game, he dies in real life.",
+      "errors": [
+        "summary exceeds 20 words"
+      ],
+      "attribution_text": [],
+      "relationship_text": [],
+      "quote_evidence": []
+    },
+    {
+      "scene_id": "SC_0026",
+      "summary": "A character warns others about the dangers of the MMORPG, urging them to gather resources and avoid certain areas. The speaker mentions that even a level one character can succeed, and that the group,",
+      "errors": [
+        "summary exceeds 20 words"
+      ],
+      "attribution_text": [],
+      "relationship_text": [],
+      "quote_evidence": []
+    },
+    {
+      "scene_id": "SC_0027",
+      "summary": "Kline says he'll go to the next village, reassures Kirito he's fine, and offers to help if needed, ending with a farewell.",
+      "errors": [
+        "unsupported named-speaker attribution",
+        "summary exceeds 20 words"
+      ],
+      "attribution_text": [
+        "Kline says"
+      ],
+      "relationship_text": [],
+      "quote_evidence": []
+    },
+    {
+      "scene_id": "SC_0028",
+      "summary": "Kayaba says: 'Hey, Kirito.'",
+      "errors": [
+        "unsupported named-speaker attribution"
+      ],
+      "attribution_text": [
+        "Kayaba says"
+      ],
+      "relationship_text": [],
+      "quote_evidence": []
+    },
+    {
+      "scene_id": "SC_0029",
+      "summary": "Kayaba, Klein, NerveGear, Way discuss appearance and facial features.",
+      "errors": [
+        "unsupported named-speaker attribution"
+      ],
+      "attribution_text": [
+        "Way discuss"
+      ],
+      "relationship_text": [],
+      "quote_evidence": []
+    },
+    {
+      "scene_id": "SC_0030",
+      "summary": "Kayaba says, 'This world can't beat me!' and Klein says, 'I'.",
+      "errors": [
+        "unsupported named-speaker attribution"
+      ],
+      "attribution_text": [
+        "Kayaba says",
+        "Klein says"
+      ],
+      "relationship_text": [],
+      "quote_evidence": []
+    },
+    {
+      "scene_id": "SC_0031",
+      "summary": "Kayaba says 'will survive,' indicating a survival statement.",
+      "errors": [
+        "unsupported named-speaker attribution"
+      ],
+      "attribution_text": [
+        "Kayaba says"
+      ],
+      "relationship_text": [],
+      "quote_evidence": []
+    },
+    {
+      "scene_id": "SC_0039",
+      "summary": "Kayaba says 'beater.'",
+      "errors": [
+        "unsupported named-speaker attribution"
+      ],
+      "attribution_text": [
+        "Kayaba says"
+      ],
+      "relationship_text": [],
+      "quote_evidence": []
+    }
+  ],
+  "normalization_records": [
+    {
+      "scene_id": "SC_0001",
+      "records": [
+        {
+          "field": "references[0].quote",
+          "before": "MMO stream you just saw promo of today's featured game, and this is what last week's launch day looked like.",
+          "after": "mmo stream you just saw promo of today's featured game, and this is what last week's launch day looked like."
+        },
+        {
+          "field": "references[1].quote",
+          "before": "Can you guess what everyone's waiting in line for?",
+          "after": "can you guess what everyone's waiting in line for?"
+        },
+        {
+          "field": "references[2].quote",
+          "before": "Sword Art Online!",
+          "after": "sword art online!"
+        }
+      ]
+    },
+    {
+      "scene_id": "SC_0002",
+      "records": [
+        {
+          "field": "references[0].quote",
+          "before": "MMO stream will be covering the internationally famous Sword Art",
+          "after": "mmo stream will be covering the internationally famous sword art"
+        }
+      ]
+    },
+    {
+      "scene_id": "SC_0003",
+      "records": [
+        {
+          "field": "references[1].quote",
+          "before": "Hey, I'm off to practice now.",
+          "after": "hey, i'm off to practice now."
+        },
+        {
+          "field": "references[2].quote",
+          "before": "See you later, okay?",
+          "after": "see you later, okay?"
+        }
+      ]
+    },
+    {
+      "scene_id": "SC_0004",
+      "records": [
+        {
+          "field": "references[0].quote",
+          "before": "Looks like you know your way around here.",
+          "after": "looks like you know your way around here."
+        },
+        {
+          "field": "references[1].quote",
+          "before": "You were in the beta test, weren't you?",
+          "after": "you were in the beta test, weren't you?"
+        },
+        {
+          "field": "references[2].quote",
+          "before": "Yeah, cool.",
+          "after": "yeah, cool."
+        },
+        {
+          "field": "references[3].quote",
+          "before": "Today's my first day.",
+          "after": "today's my first day."
+        }
+      ]
+    },
+    {
+      "scene_id": "SC_0005",
+      "records": [
+        {
+          "field": "references[0].quote",
+          "before": "Oh, come on.",
+          "after": "oh, come on."
+        },
+        {
+          "field": "references[1].quote",
+          "before": "Seriously.",
+          "after": "seriously."
+        },
+        {
+          "field": "references[2].quote",
+          "before": "You can't feel any pain.",
+          "after": "you can't feel any pain."
+        },
+        {
+          "field": "references[3].quote",
+          "before": "Oh, yeah, you're right.",
+          "after": "oh, yeah, you're right."
+        }
+      ]
+    },
+    {
+      "scene_id": "SC_0006",
+      "records": [
+        {
+          "field": "references[1].quote",
+          "before": "Initial motion?",
+          "after": "initial motion?"
+        },
+        {
+          "field": "references[2].quote",
+          "before": "Here's an easier way to look at it.",
+          "after": "here's an easier way to look at it."
+        }
+      ]
+    },
+    {
+      "scene_id": "SC_0007",
+      "records": [
+        {
+          "field": "references[0].quote",
+          "before": "Right after you start your move, wait for a little bit.",
+          "after": "right after you start your move, wait for a little bit."
+        },
+        {
+          "field": "references[1].quote",
+          "before": "When you feel the skills start to activate, drive it home.",
+          "after": "when you feel the skills start to activate, drive it home."
+        },
+        {
+          "field": "references[2].quote",
+          "before": "Drive it home?",
+          "after": "drive it home?"
+        }
+      ]
+    },
+    {
+      "scene_id": "SC_0008",
+      "records": [
+        {
+          "field": "references[0].quote",
+          "before": "Congratulations.",
+          "after": "congratulations."
+        }
+      ]
+    },
+    {
+      "scene_id": "SC_0009",
+      "records": [
+        {
+          "field": "references[0].quote",
+          "before": "That was nice.",
+          "after": "that was nice."
+        },
+        {
+          "field": "references[1].quote",
+          "before": "But that boar's about as weak as slimes in other games are.",
+          "after": "but that boar's about as weak as slimes in other games are."
+        },
+        {
+          "field": "references[2].quote",
+          "before": "Holy crap, you gotta be kidding.",
+          "after": "holy crap, you gotta be kidding."
+        },
+        {
+          "field": "references[3].quote",
+          "before": "I thought that thing was a mid-level boss.",
+          "after": "i thought that thing was a mid-level boss."
+        }
+      ]
+    },
+    {
+      "scene_id": "SC_0010",
+      "records": [
+        {
+          "field": "references[0].quote",
+          "before": "So what do you think?",
+          "after": "so what do you think?"
+        },
+        {
+          "field": "references[1].quote",
+          "before": "It's kind of fun to move your body as you fight, isn't it?",
+          "after": "it's kind of fun to move your body as you fight, isn't it?"
+        },
+        {
+          "field": "references[2].quote",
+          "before": "Oh hell's yeah!",
+          "after": "oh hell's yeah!"
+        },
+        {
+          "field": "references[3].quote",
+          "before": "You ready to move on?",
+          "after": "you ready to move on?"
+        }
+      ]
+    },
+    {
+      "scene_id": "SC_0011",
+      "records": [
+        {
+          "field": "references[0].quote",
+          "before": "I look around, I can't believe it.",
+          "after": "i look around, i can't believe it."
+        },
+        {
+          "field": "references[1].quote",
+          "before": "We're inside a game, bro.",
+          "after": "we're inside a game, bro."
+        },
+        {
+          "field": "references[2].quote",
+          "before": "Whoever made it's a genius.",
+          "after": "whoever made it's a genius."
+        },
+        {
+          "field": "references[3].quote",
+          "before": "This thing's amazing.",
+          "after": "this thing's amazing."
+        }
+      ]
+    },
+    {
+      "scene_id": "SC_0012",
+      "records": [
+        {
+          "field": "references[0].quote",
+          "before": "You want to go do some more hunting?",
+          "after": "you want to go do some more hunting?"
+        },
+        {
+          "field": "references[1].quote",
+          "before": "You know it.",
+          "after": "you know it."
+        },
+        {
+          "field": "references[2].quote",
+          "before": "I have to log out.",
+          "after": "i have to log out."
+        },
+        {
+          "field": "references[3].quote",
+          "before": "Too bad the food you eat here only satisfies your hunger virtually.",
+          "after": "too bad the food you eat here only satisfies your hunger virtually."
+        }
+      ]
+    },
+    {
+      "scene_id": "SC_0013",
+      "records": [
+        {
+          "field": "references[0].quote",
+          "before": "Log out, button go.",
+          "after": "log out, button go."
+        },
+        {
+          "field": "references[1].quote",
+          "before": "It should be there.",
+          "after": "it should be there."
+        },
+        {
+          "field": "references[2].quote",
+          "before": "Hmm.",
+          "after": "hmm."
+        },
+        {
+          "field": "references[3].quote",
+          "before": "Nope.",
+          "after": "nope."
+        }
+      ]
+    },
+    {
+      "scene_id": "SC_0014",
+      "records": [
+        {
+          "field": "references[0].quote",
+          "before": "See, not there.",
+          "after": "see, not there."
+        },
+        {
+          "field": "references[1].quote",
+          "before": "You're right.",
+          "after": "you're right."
+        },
+        {
+          "field": "references[2].quote",
+          "before": "It's not.",
+          "after": "it's not."
+        },
+        {
+          "field": "references[3].quote",
+          "before": "Oh well, today's what?",
+          "after": "oh well, today's what?"
+        }
+      ]
+    },
+    {
+      "scene_id": "SC_0015",
+      "records": [
+        {
+          "field": "references[0].quote",
+          "before": "Told you so.",
+          "after": "told you so."
+        },
+        {
+          "field": "references[1].quote",
+          "before": "And there was no emergency log out in the manual, either.",
+          "after": "and there was no emergency log out in the manual, either."
+        },
+        {
+          "field": "references[2].quote",
+          "before": "No way.",
+          "after": "no way."
+        },
+        {
+          "field": "references[3].quote",
+          "before": "You're kidding.",
+          "after": "you're kidding."
+        }
+      ]
+    },
+    {
+      "scene_id": "SC_0016",
+      "records": []
+    },
+    {
+      "scene_id": "SC_0017",
+      "records": [
+        {
+          "field": "references[0].quote",
+          "before": "Hell is that thing!",
+          "after": "hell is that thing!"
+        }
+      ]
+    },
+    {
+      "scene_id": "SC_0018",
+      "records": [
+        {
+          "field": "references[0].quote",
+          "before": "My name is Akihiko Kaya, and as of this moment, I am in control of this world.",
+          "after": "my name is akihiko kaya, and as of this moment, i am in control of this world."
+        },
+        {
+          "field": "references[1].quote",
+          "before": "You cannot log yourselves out of SAO, and no one from the outside will be able to shut down or remove the nerve gear from your head.",
+          "after": "you cannot log yourselves out of sao, and no one from the outside will be able to shut down or remove the nerve gear from your head."
+        },
+        {
+          "field": "references[2].quote",
+          "before": "If anyone attempts to do so, a transmitter inside the nerve gear will discharge a microwave signal into your skull, destroying your brain, and ending your life.",
+          "after": "if anyone attempts to do so, a transmitter inside the nerve gear will discharge a microwave signal into your skull, destroying your brain, and ending your life."
+        },
+        {
+          "field": "references[3].quote",
+          "before": "Despite my warning, the families and friends of some of the players have attempted removing the nerve gear.",
+          "after": "despite my warning, the families and friends of some of the players have attempted removing the nerve gear."
+        }
+      ]
+    },
+    {
+      "scene_id": "SC_0019",
+      "records": [
+        {
+          "field": "references[0].quote",
+          "before": "There's only one way for a player to escape now.",
+          "after": "there's only one way for a player to escape now."
+        },
+        {
+          "field": "references[1].quote",
+          "before": "You must clear the game.",
+          "after": "you must clear the game."
+        },
+        {
+          "field": "references[2].quote",
+          "before": "Right now, you're gathered on floor 1, the lowest level of Aincrad.",
+          "after": "right now, you're gathered on floor 1, the lowest level of aincrad."
+        },
+        {
+          "field": "references[3].quote",
+          "before": "If you can get through the dungeon and defeat the boss, you may advance to the next floor.",
+          "after": "if you can get through the dungeon and defeat the boss, you may advance to the next floor."
+        }
+      ]
+    },
+    {
+      "scene_id": "SC_0020",
+      "records": [
+        {
+          "field": "references[0].quote",
+          "before": "Mere?",
+          "after": "mere?"
+        }
+      ]
+    },
+    {
+      "scene_id": "SC_0021",
+      "records": [
+        {
+          "field": "references[0].quote",
+          "before": "You okay, Kirito?",
+          "after": "you okay, kirito?"
+        },
+        {
+          "field": "references[1].quote",
+          "before": "Yeah.",
+          "after": "yeah."
+        },
+        {
+          "field": "references[2].quote",
+          "before": "Wait, who are you?",
+          "after": "wait, who are you?"
+        },
+        {
+          "field": "references[3].quote",
+          "before": "I'm me, who are you?",
+          "after": "i'm me, who are you?"
+        }
+      ]
+    },
+    {
+      "scene_id": "SC_0022",
+      "records": [
+        {
+          "field": "references[0].quote",
+          "before": "Son of a - you're a guy?",
+          "after": "son of a-you're a guy?"
+        },
+        {
+          "field": "references[1].quote",
+          "before": "I'm not 17!",
+          "after": "i'm not 17!"
+        },
+        {
+          "field": "references[2].quote",
+          "before": "Wait a second, is that you, Kirito?",
+          "after": "wait a second, is that you, kirito?"
+        },
+        {
+          "field": "references[3].quote",
+          "before": "But how?",
+          "after": "but how?"
+        }
+      ]
+    },
+    {
+      "scene_id": "SC_0023",
+      "records": [
+        {
+          "field": "references[0].quote",
+          "before": "As you can see, I have achieved my goal.",
+          "after": "as you can see, i have achieved my goal."
+        },
+        {
+          "field": "references[1].quote",
+          "before": "This marks the end of the tutorial and the official launch of Sword Art Online.",
+          "after": "this marks the end of the tutorial and the official launch of sword art online."
+        },
+        {
+          "field": "references[2].quote",
+          "before": "Players, I wish you the best of luck.",
+          "after": "players, i wish you the best of luck."
+        }
+      ]
+    },
+    {
+      "scene_id": "SC_0024",
+      "records": [
+        {
+          "field": "references[0].quote",
+          "before": "Akihiko Kaya -la created a virtual world.",
+          "after": "akihiko kaya-la created a virtual world."
+        },
+        {
+          "field": "references[1].quote",
+          "before": "He designed the Nerve Gear rig.",
+          "after": "he designed the nerve gear rig."
+        },
+        {
+          "field": "references[2].quote",
+          "before": "The man's a genius.",
+          "after": "the man's a genius."
+        },
+        {
+          "field": "references[3].quote",
+          "before": "I've been a fan of his for a long time, so I know.",
+          "after": "i've been a fan of his for a long time, so i know."
+        }
+      ]
+    },
+    {
+      "scene_id": "SC_0025",
+      "records": [
+        {
+          "field": "references[0].quote",
+          "before": "You have to let us go!",
+          "after": "you have to let us go!"
+        },
+        {
+          "field": "references[1].quote",
+          "before": "Seriously?",
+          "after": "seriously?"
+        },
+        {
+          "field": "references[2].quote",
+          "before": "What do we ever do to you?",
+          "after": "what do we ever do to you?"
+        },
+        {
+          "field": "references[3].quote",
+          "before": "We just want to play a game!",
+          "after": "we just want to play a game!"
+        }
+      ]
+    },
+    {
+      "scene_id": "SC_0026",
+      "records": [
+        {
+          "field": "references[0].quote",
+          "before": "Hey, listen.",
+          "after": "hey, listen."
+        },
+        {
+          "field": "references[1].quote",
+          "before": "I'm heading out right now for the next village.",
+          "after": "i'm heading out right now for the next village."
+        },
+        {
+          "field": "references[2].quote",
+          "before": "I want you to come.",
+          "after": "i want you to come."
+        },
+        {
+          "field": "references[3].quote",
+          "before": "Huh?",
+          "after": "huh?"
+        }
+      ]
+    },
+    {
+      "scene_id": "SC_0027",
+      "records": [
+        {
+          "field": "references[0].quote",
+          "before": "If it were just Kline, but two more, or even one more.",
+          "after": "if it were just kline, but two more, or even one more."
+        },
+        {
+          "field": "references[1].quote",
+          "before": "Can't ask a guy just meant to risk his life for a bunch of strangers, can't I?",
+          "after": "can't ask a guy just meant to risk his life for a bunch of strangers, can't i?"
+        },
+        {
+          "field": "references[2].quote",
+          "before": "If that's what you want, I'll get going.",
+          "after": "if that's what you want, i'll get going."
+        },
+        {
+          "field": "references[3].quote",
+          "before": "But if you're in a jam, message me, okay?",
+          "after": "but if you're in a jam, message me, okay?"
+        }
+      ]
+    },
+    {
+      "scene_id": "SC_0028",
+      "records": [
+        {
+          "field": "references[0].quote",
+          "before": "Hey, Kirito.",
+          "after": "hey, kirito."
+        }
+      ]
+    },
+    {
+      "scene_id": "SC_0029",
+      "records": [
+        {
+          "field": "references[0].quote",
+          "before": "You look better like this.",
+          "after": "you look better like this."
+        },
+        {
+          "field": "references[1].quote",
+          "before": "Way cooler than your avatar.",
+          "after": "way cooler than your avatar."
+        },
+        {
+          "field": "references[2].quote",
+          "before": "Yeah, and I think that scruff you face fits you ten times better too.",
+          "after": "yeah, and i think that scruff you face fits you ten times better too."
+        }
+      ]
+    },
+    {
+      "scene_id": "SC_0030",
+      "records": [
+        {
+          "field": "references[0].quote",
+          "before": "This world can't beat me!",
+          "after": "this world can't beat me!"
+        },
+        {
+          "field": "references[1].quote",
+          "before": "I",
+          "after": "i"
+        }
+      ]
+    },
+    {
+      "scene_id": "SC_0031",
+      "records": []
+    },
+    {
+      "scene_id": "SC_0039",
+      "records": []
+    }
+  ],
+  "timing": {
+    "original_total_seconds": 114.207,
+    "revised_total_seconds": 75.069,
+    "revised_initialization_seconds": 2.578,
+    "per_scene_seconds": {
+      "SC_0001": 2.819,
+      "SC_0002": 1.494,
+      "SC_0003": 1.893,
+      "SC_0004": 2.496,
+      "SC_0005": 1.839,
+      "SC_0006": 1.866,
+      "SC_0007": 1.992,
+      "SC_0008": 1.249,
+      "SC_0009": 2.184,
+      "SC_0010": 2.436,
+      "SC_0011": 2.524,
+      "SC_0012": 2.685,
+      "SC_0013": 2.03,
+      "SC_0014": 3.753,
+      "SC_0015": 3.191,
+      "SC_0016": 1.659,
+      "SC_0017": 1.285,
+      "SC_0018": 2.833,
+      "SC_0019": 3.103,
+      "SC_0020": 1.461,
+      "SC_0021": 1.929,
+      "SC_0022": 2.411,
+      "SC_0023": 1.943,
+      "SC_0024": 2.564,
+      "SC_0025": 2.003,
+      "SC_0026": 3.455,
+      "SC_0027": 2.151,
+      "SC_0028": 1.533,
+      "SC_0029": 2.115,
+      "SC_0030": 1.79,
+      "SC_0031": 1.463,
+      "SC_0039": 1.389
+    },
+    "minimum": 1.249,
+    "median": 2.0164999999999997,
+    "maximum": 3.753
+  },
+  "gpu": {
+    "peak_system_gpu_used_mib": 2734,
+    "scope": "System-wide dedicated VRAM, includes desktop/other applications; not per-process peak",
+    "samples": 180
+  },
+  "thinking": {
+    "request_enable_thinking": false,
+    "server_reasoning_budget": 0,
+    "response_reasoning_present": false,
+    "response_think_tags_present": false
+  },
+  "reference_proposals": [
+    {
+      "id": "ref-cf0d27f90a0258e27429",
+      "source_hash": "28982060e5dcf4e743c7448859f1319b1726338d91c387f0bac15277360c0476",
+      "label": "Game master explains the game",
+      "start": 727.51,
+      "end": 776.67,
+      "status": "PROPOSED",
+      "score": 15,
+      "matched_terms": [
+        "control",
+        "game",
+        "gear",
+        "logout",
+        "nerve",
+        "players",
+        "world"
+      ],
+      "quotes": [
+        {
+          "id": "U_0190",
+          "start": 737.37,
+          "end": 743.65,
+          "text": "My name is Akihiko Kaya, and as of this moment, I am in control of this world."
+        },
+        {
+          "id": "U_0198",
+          "start": 768.67,
+          "end": 776.67,
+          "text": "You cannot log yourselves out of SAO, and no one from the outside will be able to shut down or remove the nerve gear from your head."
+        },
+        {
+          "id": "U_0187",
+          "start": 730.45,
+          "end": 731.81,
+          "text": "Attention, players."
+        }
+      ],
+      "reason": "Cached dialogue match using explicit query expansion: control, game, gear, logout, nerve, players, world"
+    },
+    {
+      "id": "ref-6ad2ff38f006f1da2ce2",
+      "source_hash": "28982060e5dcf4e743c7448859f1319b1726338d91c387f0bac15277360c0476",
+      "label": "Game master explains the game",
+      "start": 818.66,
+      "end": 861.82,
+      "status": "PROPOSED",
+      "score": 12,
+      "matched_terms": [
+        "clear",
+        "game",
+        "gear",
+        "nerve",
+        "players",
+        "world"
+      ],
+      "quotes": [
+        {
+          "id": "U_0216",
+          "start": 820.6,
+          "end": 826.5,
+          "text": "Despite my warning, the families and friends of some of the players have attempted removing the nerve gear."
+        },
+        {
+          "id": "U_0218",
+          "start": 829.86,
+          "end": 835.14,
+          "text": "As a result, the game now has 213 less players than when it began."
+        },
+        {
+          "id": "U_0224",
+          "start": 851.2,
+          "end": 856.96,
+          "text": "At this point, it's safe to assume the likelihood of a nerve gear being removed is minimal at best."
+        }
+      ],
+      "reason": "Cached dialogue match using explicit query expansion: clear, game, gear, nerve, players, world"
+    },
+    {
+      "id": "ref-b21c903ccb9d7e742e17",
+      "source_hash": "28982060e5dcf4e743c7448859f1319b1726338d91c387f0bac15277360c0476",
+      "label": "Game master explains the game",
+      "start": 1015.48,
+      "end": 1053.56,
+      "status": "PROPOSED",
+      "score": 11,
+      "matched_terms": [
+        "control",
+        "gear",
+        "nerve",
+        "players",
+        "world"
+      ],
+      "quotes": [
+        {
+          "id": "U_0263",
+          "start": 1019.34,
+          "end": 1024.54,
+          "text": "Why would Akihiko Kaya -la, developer of Sword Art Online and Nerve Gear, do this?"
+        },
+        {
+          "id": "U_0265",
+          "start": 1029.58,
+          "end": 1034.86,
+          "text": "The reason I created Sword Art Online was to control the fate of a world of my design."
+        },
+        {
+          "id": "U_0268",
+          "start": 1050.82,
+          "end": 1053.56,
+          "text": "Players, I wish you the best of luck."
+        }
+      ],
+      "reason": "Cached dialogue match using explicit query expansion: control, gear, nerve, players, world"
+    },
+    {
+      "id": "ref-bfe1fe4412e67b2a40b6",
+      "source_hash": "28982060e5dcf4e743c7448859f1319b1726338d91c387f0bac15277360c0476",
+      "label": "Hero and friend training conversation",
+      "start": 178.76,
+      "end": 224.01,
+      "status": "PROPOSED",
+      "score": 16,
+      "matched_terms": [
+        "activate",
+        "motion",
+        "move",
+        "skill",
+        "sword",
+        "tips"
+      ],
+      "quotes": [
+        {
+          "id": "U_0029",
+          "start": 217.11,
+          "end": 224.01,
+          "text": "If you do your initial motion right and activate a sword skill at the right time,"
+        },
+        {
+          "id": "U_0012",
+          "start": 181.98,
+          "end": 184.18,
+          "text": "So could you give me some tips on the lower floors?"
+        },
+        {
+          "id": "U_0026",
+          "start": 210.91,
+          "end": 212.57,
+          "text": "The first move is the most important."
+        }
+      ],
+      "reason": "Cached dialogue match using explicit query expansion: activate, motion, move, skill, sword, tips"
+    },
+    {
+      "id": "ref-6832acffafd53c69e0b9",
+      "source_hash": "28982060e5dcf4e743c7448859f1319b1726338d91c387f0bac15277360c0476",
+      "label": "Hero and friend training conversation",
+      "start": 207.59,
+      "end": 249.02,
+      "status": "PROPOSED",
+      "score": 13,
+      "matched_terms": [
+        "activate",
+        "motion",
+        "move",
+        "skill",
+        "sword"
+      ],
+      "quotes": [
+        {
+          "id": "U_0029",
+          "start": 217.11,
+          "end": 224.01,
+          "text": "If you do your initial motion right and activate a sword skill at the right time,"
+        },
+        {
+          "id": "U_0034",
+          "start": 244.42,
+          "end": 246.98,
+          "text": "When you feel the skills start to activate, drive it home."
+        },
+        {
+          "id": "U_0026",
+          "start": 210.91,
+          "end": 212.57,
+          "text": "The first move is the most important."
+        }
+      ],
+      "reason": "Cached dialogue match using explicit query expansion: activate, motion, move, skill, sword"
+    },
+    {
+      "id": "ref-37f7a962fc4f9679f0c8",
+      "source_hash": "28982060e5dcf4e743c7448859f1319b1726338d91c387f0bac15277360c0476",
+      "label": "Hero and friend training conversation",
+      "start": 237.27,
+      "end": 285.58,
+      "status": "PROPOSED",
+      "score": 9,
+      "matched_terms": [
+        "activate",
+        "move",
+        "skill"
+      ],
+      "quotes": [
+        {
+          "id": "U_0034",
+          "start": 244.42,
+          "end": 246.98,
+          "text": "When you feel the skills start to activate, drive it home."
+        },
+        {
+          "id": "U_0033",
+          "start": 241.44,
+          "end": 244.1,
+          "text": "Right after you start your move, wait for a little bit."
+        },
+        {
+          "id": "U_0032",
+          "start": 237.27,
+          "end": 239.23,
+          "text": "Here's an easier way to look at it."
+        }
+      ],
+      "reason": "Cached dialogue match using explicit query expansion: activate, move, skill"
+    }
+  ],
+  "confirmed_references": [
+    {
+      "id": "ref-cf0d27f90a0258e27429",
+      "source_hash": "28982060e5dcf4e743c7448859f1319b1726338d91c387f0bac15277360c0476",
+      "label": "Game master explains the game",
+      "rough_start": 727.51,
+      "rough_end": 776.67,
+      "start": 727.51,
+      "end": 776.67,
+      "status": "CONFIRMED",
+      "reviewed_at": "2026-11-14T14:24:40.711836+00:00",
+      "confirmation_origin": "Owner explicitly confirmed this proposal in the chat on 2026-11-14"
+    },
+    {
+      "id": "ref-6832acffafd53c69e0b9",
+      "source_hash": "28982060e5dcf4e743c7448859f1319b1726338d91c387f0bac15277360c0476",
+      "label": "Hero and friend training conversation",
+      "rough_start": 207.59,
+      "rough_end": 249.02,
+      "start": 207.59,
+      "end": 249.02,
+      "status": "CONFIRMED",
+      "reviewed_at": "2026-11-14T14:24:40.726875+00:00",
+      "confirmation_origin": "Owner explicitly confirmed this proposal in the chat on 2026-11-14"
+    }
+  ],
+  "known_moments_comparison": {
+    "new_model_selector": "NOT_RUN_PHASE_B_GATE_FAILED",
+    "criteria": "Found iff temporal IoU >= 0.30; partial overlaps recorded separately",
+    "selectors": {
+      "legacy_unfiltered": {
+        "selected": [
+          {
+            "start": 237.27,
+            "end": 276.68,
+            "reason": "dialogue segment with complete speech units",
+            "zone_check": [
+              [],
+              [
+                {
+                  "id": "Z_1ae40f20b665",
+                  "level": "SOFT",
+                  "label": "OP",
+                  "overlap_fraction": 0.069272,
+                  "reason": "Early episode prior; not proof of an opening"
+                }
+              ]
+            ]
+          },
+          {
+            "start": 1092.341,
+            "end": 1137.67,
+            "reason": "dialogue segment with complete speech units",
+            "zone_check": [
+              [],
+              []
+            ]
+          }
+        ],
+        "known_moments": [
+          {
+            "label": "Game master explains the game",
+            "start": 727.51,
+            "end": 776.67,
+            "result": "MISSED",
+            "best_temporal_iou": 0
+          },
+          {
+            "label": "Hero and friend training conversation",
+            "start": 207.59,
+            "end": 249.02,
+            "result": "MISSED",
+            "best_temporal_iou": 0.170068
+          }
+        ]
+      },
+      "current_3a": {
+        "selected": [
+          {
+            "start": 637.82,
+            "end": 683.308,
+            "reason": "dialogue segment with complete speech units",
+            "zone_check": [
+              [],
+              []
+            ]
+          },
+          {
+            "start": 1092.341,
+            "end": 1137.67,
+            "reason": "dialogue segment with complete speech units",
+            "zone_check": [
+              [],
+              []
+            ]
+          }
+        ],
+        "known_moments": [
+          {
+            "label": "Game master explains the game",
+            "start": 727.51,
+            "end": 776.67,
+            "result": "MISSED",
+            "best_temporal_iou": 0
+          },
+          {
+            "label": "Hero and friend training conversation",
+            "start": 207.59,
+            "end": 249.02,
+            "result": "MISSED",
+            "best_temporal_iou": 0
+          }
+        ]
+      }
+    }
+  },
+  "integrity": {
+    "transcription.json": true,
+    "analysis_cache.json": true,
+    "original_raw_model_results_unchanged": true,
+    "source_hash_matches": true
+  },
+  "tests": {
+    "baseline_passed": 277,
+    "phase_a_passed": 282,
+    "phase_b_passed": 285,
+    "final_passed": 293,
+    "subtests_passed": 9,
+    "failed": 0,
+    "skipped": 0,
+    "final_seconds": 55.51,
+    "browser_checks": 22
+  },
+  "new_selector": "NOT_IMPLEMENTED_GATE_FAILED",
+  "model_downloads": 0,
+  "raw_paths": [
+    ".runtime/sprint3b/text-benchmark/results.json",
+    ".runtime/sprint3b-continuation/revised-benchmark/results.json",
+    ".runtime/sprint3b-continuation/final-audits.json"
+  ]
+}
