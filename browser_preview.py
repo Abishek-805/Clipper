@@ -22,6 +22,7 @@ from source_import import import_source
 from daily_workflow import manual_clip, restore_version, byte_range, export_delivery
 from glossary import load_glossary, glossary_path
 from structure import prepare_structure, apply_overrides, write_json as write_structure_json
+from known_moments import load_review as load_known_review, save_decision as save_known_decision, preview as known_preview
 
 _LOCK = threading.RLock()
 _CANCEL: threading.Event | None = None
@@ -40,8 +41,13 @@ if isinstance(_saved, dict) and _saved.get("state") != "running":
     _STATE.update(_saved)
 elif isinstance(_saved, dict) and _saved.get("state") == "running":
     _STATE.update(_saved, state="interrupted", status="Previous browser job was interrupted; inspect its job folder before starting again.")
+_STATE["reviewing"] = False
 
 PAGE = (Path(__file__).parent / "web" / "index.html").read_text(encoding="utf-8-sig")
+
+
+def _operation_active():
+    return _STATE.get("state") == "running" or any(_STATE.get(k) for k in ("rendering", "importing", "reviewing"))
 
 
 def _sample_gpu_activity():
@@ -299,12 +305,17 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json({"name": source.name, "duration": info.duration, "width": info.width,
                     "height": info.height, "video_codec": video.get("codec"), "audio": audio})
             except Exception as exc: return self._json({"error": str(exc)}, 400)
-        if parsed.path.startswith("/files/"):
-            parts = [unquote(p) for p in parsed.path.removeprefix("/files/").split("/")]
+        if parsed.path.startswith(("/files/", "/review-files/")):
+            review = parsed.path.startswith("/review-files/")
+            prefix = "/review-files/" if review else "/files/"
+            parts = [unquote(p) for p in parsed.path.removeprefix(prefix).split("/")]
             if len(parts) != 2: return self._json({"error": "Invalid artifact path"}, 404)
-            root = (OUTPUT / "jobs" / parts[0]).resolve()
+            if review and not re.fullmatch(r"[a-f0-9]{64}", parts[0]):
+                return self._json({"error": "Invalid source fingerprint"}, 404)
+            base = (OUTPUT / ("Review" if review else "jobs")).resolve()
+            root = (base / parts[0]).resolve()
             target = (root / parts[1]).resolve()
-            if root not in target.parents or not root.is_relative_to((OUTPUT / "jobs").resolve()) or not target.is_file():
+            if root not in target.parents or not root.is_relative_to(base) or not target.is_file():
                 return self._json({"error": "Artifact not found"}, 404)
             size = target.stat().st_size
             try:
@@ -332,9 +343,52 @@ class Handler(BaseHTTPRequestHandler):
         origin = self.headers.get("Origin")
         if origin and origin != f"http://{self.headers.get('Host', '')}":
             return self._json({"error": "Requests must originate from the local browser console."}, 403)
+        if self.path == "/api/known-moments":
+            reserved = False
+            try:
+                body = json.loads(self.rfile.read(int(self.headers.get("Content-Length", "0"))) or b"{}")
+                action = body.get("action", "load")
+                if action not in ("load", "preview", "confirm", "reject", "edit"):
+                    raise ValueError("Unknown reference action")
+                with _LOCK:
+                    if _operation_active():
+                        return self._json({"error": "An operation is already running"}, 409)
+                    _STATE["reviewing"] = True
+                    reserved = True
+                    cancel = threading.Event()
+                    _CANCEL = cancel
+                source, info = _probe_source(body.get("source", ""))
+                audio = body.get("audio_index")
+                if type(audio) is not int:
+                    raise ValueError("Choose an audio track for reference playback")
+                key = hashlib.sha256(str(source.resolve()).casefold().encode()).hexdigest()[:20]
+                data = load_known_review(source, ANALYSIS_CACHE / key, OUTPUT, audio,
+                                         Path(__file__).parent / "evaluation" / "known_moments")
+                if action != "load" and data["source_hash"] != body.get("source_hash"):
+                    raise ValueError("Source changed since proposals were displayed")
+                folder = Path(data["folder"])
+                if action == "preview":
+                    proposal = next((p for p in data["proposals"] if p["id"] == body.get("proposal_id")), None)
+                    if proposal is None:
+                        raise ValueError("Unknown proposal")
+                    target = known_preview(source, folder, proposal, body.get("start"), body.get("end"), info, audio, cancel)
+                    return self._json({"url": f"/review-files/{data['source_hash']}/{target.name}",
+                                       "source_start": float(body["start"]), "proxy": True})
+                if action != "load":
+                    data["decisions"] = save_known_decision(folder / "known-moments.json", data["source_hash"],
+                        data["proposals"], body.get("proposal_id"), action, body.get("start"), body.get("end"), info.duration)
+                    data["confirmed_count"] = sum(d["status"] == "CONFIRMED" for d in data["decisions"].values())
+                return self._json(data)
+            except Exception as exc:
+                return self._json({"error": str(exc)}, 400)
+            finally:
+                if reserved:
+                    with _LOCK:
+                        _STATE["reviewing"] = False
+                        _CANCEL = None
         if self.path == "/api/import":
             with _LOCK:
-                if _STATE.get("state") == "running" or _STATE.get("rendering") or _STATE.get("importing"):
+                if _operation_active():
                     return self._json({"error": "An operation is already running"}, 409)
                 _STATE["importing"] = True
             try:
@@ -361,7 +415,7 @@ class Handler(BaseHTTPRequestHandler):
             try:
                 body = json.loads(self.rfile.read(int(self.headers.get("Content-Length", "0"))) or b"{}")
                 with _LOCK:
-                    if _STATE.get("state") == "running" or _STATE.get("rendering") or _STATE.get("importing"):
+                    if _operation_active():
                         return self._json({"error": "An operation is already running"}, 409)
                     if self.path == "/api/subtitle-confirmation":
                         from dialogue import confirm_track
@@ -452,7 +506,7 @@ class Handler(BaseHTTPRequestHandler):
             try:
                 body = json.loads(self.rfile.read(int(self.headers.get("Content-Length", "0"))))
                 with _LOCK:
-                    if _STATE.get("state") == "running" or _STATE.get("rendering") or _STATE.get("importing"):
+                    if _operation_active():
                         return self._json({"error": "An operation is already running"}, 409)
                     _open_job(body.get("job_id"))
                 return self._json({"ok": True})
@@ -466,7 +520,7 @@ class Handler(BaseHTTPRequestHandler):
         try: body = json.loads(self.rfile.read(int(self.headers.get("Content-Length", "0"))))
         except (ValueError, json.JSONDecodeError): return self._json({"error": "Invalid JSON"}, 400)
         with _LOCK:
-            if _STATE.get("state") == "running" or _STATE.get("rendering") or _STATE.get("importing"):
+            if _operation_active():
                 return self._json({"error": "A job or clip render is already running"}, 409)
         if self.path == "/api/rerender":
             try:
@@ -496,7 +550,7 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json({"error": str(exc)}, 400)
             cancel = threading.Event()
             with _LOCK:
-                if _STATE.get("state") == "running" or _STATE.get("rendering") or _STATE.get("importing"):
+                if _operation_active():
                     return self._json({"error": "An operation is already running"}, 409)
                 _write_json(job_dir / "pending-edits.json", body)
                 _CANCEL = cancel
@@ -523,7 +577,7 @@ class Handler(BaseHTTPRequestHandler):
         except Exception as exc: return self._json({"error": str(exc)}, 400)
         thread = threading.Thread(target=_run_job, args=(source, audio_index, caption_mode, job_id), daemon=True)
         with _LOCK:
-            if _STATE.get("state") == "running" or _STATE.get("rendering") or _STATE.get("importing"):
+            if _operation_active():
                 return self._json({"error": "An operation is already running"}, 409)
             _STATE.update(state="running", status="Starting job")
             _CANCEL = threading.Event()

@@ -1,22 +1,47 @@
 {
   "schema": "clipper-known-moments-v1",
   "source_hash": "28982060e5dcf4e743c7448859f1319b1726338d91c387f0bac15277360c0476",
-  "moments": [],
+  "moments": [
+    {
+      "id": "ref-cf0d27f90a0258e27429",
+      "source_hash": "28982060e5dcf4e743c7448859f1319b1726338d91c387f0bac15277360c0476",
+      "label": "Game master explains the game",
+      "rough_start": 727.51,
+      "rough_end": 776.67,
+      "start": 727.51,
+      "end": 776.67,
+      "status": "CONFIRMED",
+      "reviewed_at": "2026-11-14T14:24:40.711836+00:00",
+      "confirmation_origin": "Owner explicitly confirmed this proposal in the chat on 2026-11-14"
+    },
+    {
+      "id": "ref-6832acffafd53c69e0b9",
+      "source_hash": "28982060e5dcf4e743c7448859f1319b1726338d91c387f0bac15277360c0476",
+      "label": "Hero and friend training conversation",
+      "rough_start": 207.59,
+      "rough_end": 249.02,
+      "start": 207.59,
+      "end": 249.02,
+      "status": "CONFIRMED",
+      "reviewed_at": "2026-11-14T14:24:40.726875+00:00",
+      "confirmation_origin": "Owner explicitly confirmed this proposal in the chat on 2026-11-14"
+    }
+  ],
   "pending_owner_descriptions": [
     {
       "label": "Game master explains the game",
       "owner_description": "the time the game master explain about the game",
-      "start": null,
-      "end": null,
-      "status": "needs_owner_timestamps"
+      "start": 727.51,
+      "end": 776.67,
+      "status": "owner_confirmed_reference"
     },
     {
       "label": "Hero and friend training conversation",
       "owner_description": "the scence where the hero and his friend have little training convo",
-      "start": null,
-      "end": null,
-      "status": "needs_owner_timestamps"
+      "start": 207.59,
+      "end": 249.02,
+      "status": "owner_confirmed_reference"
     }
   ],
-  "instructions": "Add owner-confirmed source seconds and labels to moments. Do not copy previous selector/model intervals as human annotations. Pending descriptions are not scored. Two scenes were described by the owner; no timestamps were supplied. This is a spot-check template, not a full-episode benchmark."
+  "instructions": "Two proposed source intervals were explicitly confirmed by the owner in chat. These are personal reference moments, not a full-episode editorial benchmark. Other generated proposals remain unconfirmed; never infer additional owner labels."
 }

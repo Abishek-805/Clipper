@@ -25,7 +25,8 @@ def preview_command(source: Path, output: Path, start: float, duration: float,
                       "-movflags", "+faststart", str(output)]
 
 
-def validate_preview(path: Path, audio_stream_index: int | None, audio_language: str | None) -> dict:
+def validate_preview(path: Path, audio_stream_index: int | None, audio_language: str | None,
+                     maximum_duration: float = 8.05) -> dict:
     probe = ffprobe_path()
     if not probe:
         raise FileNotFoundError("FFprobe is required to validate review previews")
@@ -57,8 +58,8 @@ def validate_preview(path: Path, audio_stream_index: int | None, audio_language:
             raise ValueError(f"Preview audio/video timestamps are not synchronized: {path}")
         start_delta, duration_delta = abs(video_start - audio_start), abs(video_duration - audio_duration)
     duration = float(data.get("format", {}).get("duration", 0))
-    if not 0 < duration <= 8.05:
-        raise ValueError(f"Preview duration is outside the 8 second limit: {path} ({duration})")
+    if not 0 < duration <= maximum_duration:
+        raise ValueError(f"Preview duration is outside the {maximum_duration:g} second limit: {path} ({duration})")
     return {"duration": duration, "audio_available": bool(audios),
             "audio_language": audios[0].get("tags", {}).get("language") if audios else None,
             "stream_types": [stream.get("codec_type") for stream in streams],
