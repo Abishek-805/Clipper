@@ -12,6 +12,21 @@ from clipper_runtime.cuda_dlls import register_cuda_dll_directories
 APP_DIR = Path(__file__).resolve().parent
 
 
+def gpu_activity() -> dict:
+    """System-wide NVIDIA engine activity; job device provenance is recorded separately."""
+    try:
+        result = subprocess.run(["nvidia-smi", "--query-gpu=name,memory.used,memory.total,utilization.gpu,utilization.encoder,utilization.decoder",
+            "--format=csv,noheader,nounits"], capture_output=True, text=True, check=True, timeout=2,
+            creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0)
+        name, used, total, gpu, encoder, decoder = [p.strip() for p in result.stdout.splitlines()[0].split(",")]
+        number = lambda value: int(value) if value.isdigit() else None
+        return {"available": True, "scope": "system", "name": name, "used_mib": number(used),
+                "total_mib": number(total), "gpu_percent": number(gpu), "encoder_percent": number(encoder),
+                "decoder_percent": number(decoder)}
+    except (OSError, subprocess.SubprocessError, ValueError, IndexError) as exc:
+        return {"available": False, "reason": str(exc)}
+
+
 def _tool_candidates(name: str) -> list[Path]:
     found = []
     env_dir = os.environ.get("CLIPPER_FFMPEG_DIR")

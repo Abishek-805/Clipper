@@ -15,6 +15,7 @@ const {chromium}=require(process.env.CLIPPER_PLAYWRIGHT_MODULE||'playwright');
  const base=process.env.CLIPPER_UI_URL||'http://127.0.0.1:8771';
  await page.goto(base);await page.locator('.caption-row textarea').first().waitFor();
  await page.waitForFunction(()=>document.querySelector('#jobs option')?.value&&document.querySelector('#jobs option').textContent!=='Loading saved jobs…');
+ assert((await page.locator('#gpu').innerText()).includes('System GPU'));
  await page.waitForFunction(()=>!document.querySelector('#episode-panel').open);
  assert.equal(await page.locator('#episode-panel').getAttribute('open'),null);
  const draftTop=await page.locator('.draft').first().evaluate(e=>e.getBoundingClientRect().top);
@@ -60,7 +61,7 @@ const {chromium}=require(process.env.CLIPPER_PLAYWRIGHT_MODULE||'playwright');
  assert.equal(await page.locator('.preview-panel').first().evaluate(e=>getComputedStyle(e).position),'static');
  await page.setViewportSize({width:1440,height:1000});assert.equal(await page.locator('.preview-panel').first().evaluate(e=>getComputedStyle(e).position),'sticky');
  assert.deepEqual(errors,[]);assert.deepEqual(consoleErrors,[]);
- const checks=['saved-job layout','desktop screenshot','caption multiline edit','poll preservation','reload recovery','new episode focus','browser file chooser','cancelled chooser','unsupported file rejection','track inspection','idle startup','mobile overflow','responsive preview'];if(newSourceImported)checks.push('new local import');
+ const checks=['saved-job layout','desktop screenshot','caption multiline edit','poll preservation','reload recovery','new episode focus','browser file chooser','cancelled chooser','unsupported file rejection','track inspection','idle startup','mobile overflow','responsive preview','system GPU telemetry'];if(newSourceImported)checks.push('new local import');
  fs.writeFileSync('output/playwright/result.json',JSON.stringify({playwright:require(path.join(process.env.CLIPPER_PLAYWRIGHT_MODULE||'playwright','package.json')).version,draftTop,processingRequests,pageErrors:errors,consoleErrors,checks},null,2));
  console.log(`PASS: ${checks.length} Playwright UI checks; no page/console errors or processing requests.`);await context.close();
  }finally{await browser.close()}

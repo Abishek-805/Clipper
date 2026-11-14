@@ -26,9 +26,10 @@ from editorial import (QUALITY_FLOOR, apply_assessment, assess_candidate, local_
 from model_manager import ModelManager
 from vision import (VisionModelManager, extract_candidate_frames, read_semantic_cache,
                     semantic_cache_key, write_semantic_cache)
+from gpu_analysis import visual_signals as _gpu_visual_signals
 
 VIDEO_EXTENSIONS = {".mp4", ".mkv", ".mov", ".avi", ".webm", ".m4v"}
-ANALYSIS_ENGINE_VERSION = "task06c-sampled-selected-stream-v1"
+ANALYSIS_ENGINE_VERSION = "nvdec-shared-visual-pass-v1"
 CANDIDATE_SCORE_WEIGHTS = {
     "average_motion": 0.20, "peak_motion": 0.10, "motion_consistency": 0.08,
     "average_audio_energy": 0.18, "audio_energy_variation": 0.08,
@@ -248,6 +249,30 @@ def _scene_cuts(path: Path) -> tuple[list[float], str]:
         return [], f"scene detection unavailable: {exc}"
     except Exception as exc:
         return [], f"scene detection failed: {type(exc).__name__}: {exc}"
+
+
+def _visual_analysis(path: Path, info: VideoInfo, cancel: threading.Event, progress):
+    reason = "CPU visual analysis requested"
+    if os.getenv("CLIPPER_VISUAL_DEVICE", "auto") != "cpu":
+        try:
+            return _gpu_visual_signals(path, info.duration, info.fps, cancel, progress)
+        except InterruptedError:
+            raise
+        except Exception as exc:
+            reason = f"{type(exc).__name__}: {exc}"
+            progress(f"GPU visual analysis unavailable · CPU fallback: {reason}")
+    stats = {"device": "cpu", "fallback_reason": reason}
+    progress("Visual analysis · CPU motion decode")
+    started = time.perf_counter()
+    motion = _motion(path, info.duration, cancel, stats)
+    stats["motion_seconds"] = round(time.perf_counter()-started, 3)
+    if cancel.is_set():
+        raise InterruptedError("Processing cancelled")
+    progress("Visual analysis · CPU scene detection")
+    started = time.perf_counter()
+    cuts, status = _scene_cuts(path)
+    stats["scene_seconds"] = round(time.perf_counter()-started, 3)
+    return motion, cuts, status, stats
 
 
 def _analysis_fingerprint(path: Path, stat, audio_index: int | None = None) -> str:
@@ -1513,7 +1538,10 @@ def process_video(path: Path, output_root: Path, model_size: str, clip_count: in
         scene_status = cached_analysis["scene_detection_status"]
         analysis_cache_status = "reused"
         stage_timings["motion_frames_decoded"] = cached_analysis.get("motion_frames_decoded")
+        visual_analysis = {"device": "cache", "cached_origin": cached_analysis.get("visual_analysis", {}).get("device", "unknown")}
+        progress("Visual analysis · cached signals reused; no decoding performed")
     else:
+        progress("Audio energy · CPU FFmpeg/NumPy · selected audio track" if audio_index is not None else "Audio energy · no audio track; skipped")
         stage_started = time.perf_counter()
         try:
             energy = _audio_energy(path, info.duration, cancel, audio_index) if audio_index is not None else [0.0] * max(1, math.ceil(info.duration))
@@ -1526,15 +1554,12 @@ def process_video(path: Path, output_root: Path, model_size: str, clip_count: in
             audio_analysis_valid = False
         stage_timings["audio_analysis_seconds"] = round(time.perf_counter() - stage_started, 3)
         stage_started = time.perf_counter()
-        motion_stats = {}
-        motion = _motion(path, info.duration, cancel, motion_stats)
-        stage_timings["motion_analysis_seconds"] = round(time.perf_counter() - stage_started, 3)
+        motion, cuts, scene_status, motion_stats = _visual_analysis(path, info, cancel, progress)
+        visual_analysis = motion_stats
+        stage_timings["visual_analysis_seconds"] = round(time.perf_counter() - stage_started, 3)
+        stage_timings["motion_analysis_seconds"] = motion_stats.get("motion_seconds")
+        stage_timings["scene_analysis_seconds"] = motion_stats.get("scene_seconds")
         stage_timings["motion_frames_decoded"] = motion_stats.get("frames_decoded")
-        if cancel.is_set():
-            raise InterruptedError("Processing cancelled")
-        stage_started = time.perf_counter()
-        cuts, scene_status = _scene_cuts(path)
-        stage_timings["scene_analysis_seconds"] = round(time.perf_counter() - stage_started, 3)
         if cancel.is_set():
             raise InterruptedError("Processing cancelled")
         analysis_cache_status = "created"
@@ -1542,7 +1567,7 @@ def process_video(path: Path, output_root: Path, model_size: str, clip_count: in
             _write_analysis_cache(analysis_cache_path, {"schema": 2, "fingerprint": fingerprint, "motion": motion,
                                                         "motion_frames_decoded": motion_stats.get("frames_decoded"),
                                                         "audio_energy": energy, "scene_cuts": cuts,
-                                                        "scene_detection_status": scene_status})
+                                                        "scene_detection_status": scene_status, "visual_analysis": visual_analysis})
         else:
             analysis_cache_status = "not cached because an analysis stage reported a failure"
     progress(f"Analysis signals · {analysis_cache_status}")
@@ -1576,9 +1601,12 @@ def process_video(path: Path, output_root: Path, model_size: str, clip_count: in
         progress(f"Transcription failed ({transcript.device}/{transcript.precision}): {transcript.message}")
     elif transcript.status == "unavailable":
         progress(f"Transcription unavailable: {transcript.message}")
+    elif transcript.message == "transcription cache hit":
+        progress(f"Transcription cache reused · no inference performed (saved {transcript.device}/{transcript.precision})")
     else:
         progress(f"Transcription {transcript.status} · {transcript.device}/{transcript.precision} · {len(words)} words")
     stage_started = time.perf_counter()
+    progress("Candidate ranking · CPU · cached visual/audio/dialogue signals")
     selection = select_clips(info.duration, motion, energy, cuts, words, clip_count, min_length, max_length,
                              context_margin=context_margin, cancel=cancel,
                              include_ranges=include_ranges, exclude_ranges=exclude_ranges)
@@ -1800,6 +1828,8 @@ def process_video(path: Path, output_root: Path, model_size: str, clip_count: in
                     "analysis_cache_status": analysis_cache_status,
                     "transcription_cache_status": "reused" if transcript.message == "transcription cache hit" else
                         "created" if cache.is_file() and cache.stat().st_mtime_ns != transcription_cache_mtime else "not used",
+                    "visual_analysis": dict(visual_analysis),
+                    "transcription_executed": transcript.device in {"cuda", "cpu"} and transcript.message != "transcription cache hit",
                     "scene_cuts": cuts,
                     "scene_detection_status": scene_status, "transcription_words": len(words),
                     "transcription_available": bool(words), "transcription_status": transcript.status,

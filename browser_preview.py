@@ -17,6 +17,7 @@ from urllib.parse import parse_qs, unquote, urlparse
 from clipper import process_video, probe, rerender_single_clip
 from main import ANALYSIS_CACHE, APP_STATE, OUTPUT, PREFERENCES, _read_json, _whisper_model_cached, _write_json
 from model_manager import ModelManager
+from diagnostics import gpu_activity
 from source_import import import_source
 from daily_workflow import manual_clip, restore_version, byte_range, export_delivery
 from glossary import load_glossary, glossary_path
@@ -26,10 +27,12 @@ _CANCEL: threading.Event | None = None
 _STATE = {"state": "idle", "status": "Choose one local video file.", "logs": [], "job_folder": None,
           "report": None, "rendering": False, "rerender_result": None}
 _MANIFEST_CACHE: dict[str, tuple[int, dict]] = {}
+_GPU_SAMPLE = {"sampling": False, "time": 0.0, "value": {"available": False}}
+_GPU_LOCK = threading.Lock()
 _ALLOWED_CAPTIONS = {"Whisper transcription", "Whisper translation to English", "None"}
 _STATUS_REPORT_FIELDS = ("schema", "job_id", "source", "source_path", "source_size", "source_mtime_ns",
     "source_fingerprint", "selected_audio_stream_index", "selected_audio_stream", "caption_mode",
-    "transcription_device", "transcription_compute_type", "transcription_fallback_reason", "cache",
+    "visual_analysis", "transcription_executed", "transcription_device", "transcription_compute_type", "transcription_fallback_reason", "cache",
     "candidate_count", "selected_draft_count", "selection_status", "job_output_directory", "failure", "drafts")
 _saved = _read_json(APP_STATE / "browser_preview_status.json")
 if isinstance(_saved, dict) and _saved.get("state") != "running":
@@ -38,6 +41,12 @@ elif isinstance(_saved, dict) and _saved.get("state") == "running":
     _STATE.update(_saved, state="interrupted", status="Previous browser job was interrupted; inspect its job folder before starting again.")
 
 PAGE = (Path(__file__).parent / "web" / "index.html").read_text(encoding="utf-8-sig")
+
+
+def _sample_gpu_activity():
+    value = gpu_activity()
+    with _GPU_LOCK:
+        _GPU_SAMPLE.update(time=time.monotonic(), value=value, sampling=False)
 
 
 def _publish(**changes):
@@ -124,7 +133,7 @@ def _execute_job(source: Path, audio_index: int | None, caption_mode: str, job_i
     job_dir.mkdir(parents=True, exist_ok=False)
     started = time.strftime("%Y-%m-%dT%H:%M:%S%z")
     _publish(state="running", status=f"Analyzing {source.name}", logs=[], job_id=job_id,
-             job_folder=str(job_dir), report=None)
+             job_folder=str(job_dir), report=None, model_status=None)
     manager = ModelManager(model_size, local_files_only=True,
                            status_callback=lambda info: _publish(model_status=info))
     outcome, failure, count = "failed", None, 0
@@ -244,6 +253,14 @@ class Handler(BaseHTTPRequestHandler):
                         draft.setdefault("glossary_replacements", (clip.get("render") or {}).get("glossary_replacements", []))
                         draft.setdefault("edit_version", len(clip.get("edit_history", [])))
                 snapshot["report"] = {key: report.get(key) for key in _STATUS_REPORT_FIELDS}
+            with _GPU_LOCK:
+                if time.monotonic() - _GPU_SAMPLE["time"] > 2 and not _GPU_SAMPLE["sampling"]:
+                    _GPU_SAMPLE["sampling"] = True
+                    try:
+                        threading.Thread(target=_sample_gpu_activity, daemon=True).start()
+                    except RuntimeError:
+                        _GPU_SAMPLE["sampling"] = False
+                snapshot["gpu_activity"] = {**_GPU_SAMPLE["value"], "sampling": _GPU_SAMPLE["sampling"]}
             return self._json(snapshot)
         if parsed.path == "/api/glossary":
             return self._json({"replacements": load_glossary()})

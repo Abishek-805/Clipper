@@ -70,3 +70,12 @@ Checks cover the saved-job layout, desktop/mobile overflow, caption editing, pol
 Disposable test caches, inactive browser profiles, benchmark copies, and verified duplicate runtime downloads can be quarantined under `_Trash/<timestamp>/`. This folder is local and Git-ignored. Each cleanup includes `manifest.json` with original paths, reasons, byte counts, and SHA-256 integrity checks; use it to restore individual entries without overwriting regenerated files. Historical test evidence may now be at its listed trash path.
 
 Source media, imported episodes, completed production jobs/exports, models, the active `.runtime/llama.cpp/b12284/bin` runtime, and persistent analysis caches are retained. Moving files to trash does **not** free disk space; no permanent deletion is performed. Python/test caches and screenshots may regenerate when tools run again and remain ignored.
+
+
+### GPU stages and CPU work
+
+New visual analysis prefers a single **NVDEC decode + CUDA resize** pass. PySceneDetect and motion scoring consume only 320×180 samples on the CPU instead of decoding the full-resolution episode twice. Whisper prefers CUDA int8_float16; final H.264 encoding prefers NVENC. Audio processing, scoring, captions and some render filters still use CPU, so CPU activity does not mean acceleration failed.
+
+The status area shows actual stage/device messages and system-wide GPU memory, decode and encode utilization. Those counters include other applications; job manifests separately record device provenance. Cached analysis/transcripts are labeled as reused and do not run inference again. In Task Manager, inspect NVIDIA **Video Decode / Video Encode / CUDA** engines rather than only the default 3D graph. Unsupported GPU decoding falls back explicitly with the reason in Processing details. `CLIPPER_VISUAL_DEVICE=cpu` is available for diagnostics.
+
+This visual-engine update refreshes old visual-analysis caches once; transcription caches remain independent. The sampled detector may shift scene boundaries slightly, so review clips as usual.
