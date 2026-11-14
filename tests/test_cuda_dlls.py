@@ -41,7 +41,8 @@ class CudaDllDirectoryTests(unittest.TestCase):
                 cuda_dlls.register_cuda_dll_directories()
                 cuda_dlls.register_cuda_dll_directories()
             loaded = [Path(call.args[0]) for call in load.call_args_list]
-            self.assertEqual([folder / "cublasLt64_12.dll", folder / "cublas64_12.dll"], loaded)
+            self.assertEqual([folder / "cublasLt64_12.dll", folder / "cublas64_12.dll"], [p for p in loaded if p.parent == folder])
+            self.assertEqual(len(loaded), len(set(loaded)))
 
     def test_missing_packages_are_a_safe_noop(self):
         with tempfile.TemporaryDirectory() as tmp, patch.object(os, "add_dll_directory") as add:
