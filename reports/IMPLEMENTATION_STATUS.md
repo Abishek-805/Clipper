@@ -1,5 +1,15 @@
 # Clipper implementation status
 
+## Sprint 3B — Subtitle confirmation delivered; model gate failed (2026-11-14)
+
+- Branch `feature/personal-v1-understanding-3b` from verified 3A remote `bf5077f1f826759f14ef6deb9a48cfb089ac8d84`. Phase 0 commit `1d23468`; benchmark implementation `a07f252adcfe5ab0a1f726a9de55a7f6abb20683`, pushed and remote-verified.
+- Added five-line subtitle previews and explicit source-hash/stream-bound owner decisions. The owner chose **leave track 4 unconfirmed; use Whisper**. No real track was automatically confirmed. Caption defaults and production selector are unchanged.
+- Real offline text-only 2B pass: 32 scenes analyzed, seven without dialogue skipped; 114.207 s total; 3142 MiB peak **system-wide** GPU usage. JSON/ID checks passed, but only 7/32 responses passed every literal check. 43/72 name entries were absent from input (mostly role labels); one quote normalized hyphen spacing. These are contract failures, not a measured general hallucination/accuracy rate.
+- **Stopped at Phase 1 as specified.** Phases 2–4 are not implemented. No new nominations, action verifier, candidate UI or automatic-selector integration. No larger model or package was downloaded. Official pinned 4B/8B options and limits are reported for owner decision; larger does not imply verified quality.
+- Baseline 267 + 9 subtests; final **277 passed + 9 subtests, 0 failed/skipped**. 19 focused tests; 14 Playwright regression checks plus manual CLI sample inspection. Compilation/diff checks passed; original signal/transcription cache hashes unchanged.
+- Known-moments file contains two **untimed owner descriptions**, zero scored intervals. The human benchmark/editorial acceptance remain pending.
+- [Sprint 3B report](understanding-3b-report.md) · [Measured evidence and model pins](understanding-3b-evidence.json).
+
 ## Sprint 3A — Structure exclusions and dialogue source (2026-11-14)
 
 - Delivered on `feature/personal-v1-understanding`, based on verified daily-ready remote `298f70a9e970d2744d0ef1243f363c21dd08739f`; implementation `5c903f1eead6bb7f11e93fe42bb0218de70f9207` pushed and remote-verified.

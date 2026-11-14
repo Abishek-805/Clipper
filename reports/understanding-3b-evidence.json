@@ -1,0 +1,1217 @@
+{
+  "branch": "feature/personal-v1-understanding-3b",
+  "parent": "bf5077f1f826759f14ef6deb9a48cfb089ac8d84",
+  "implementation": "a07f252adcfe5ab0a1f726a9de55a7f6abb20683",
+  "source_hash": "28982060e5dcf4e743c7448859f1319b1726338d91c387f0bac15277360c0476",
+  "subtitle_source": {
+    "source": "cached Whisper words",
+    "stream_index": null,
+    "reason": "No unique reliable English dialogue track; Whisper fallback"
+  },
+  "owner_track_choice": "Leave unconfirmed; use Whisper",
+  "model_sha256": "089d75c52f4b7ffc56ba998ffc50aae89fcafc755f9e7208aacca281dca6c2ae",
+  "runtime_build": "b12284",
+  "command": [
+    "C:\\Users\\ashek\\Videos\\Clipper\\.runtime\\llama.cpp\\b12284\\bin\\llama-server.exe",
+    "--model",
+    "C:\\Users\\ashek\\AppData\\Local\\Clipper\\models\\Qwen3-VL-2B-Instruct-GGUF\\52d6c8ffea26cc873ac5ad116f8631268d7eb503\\Qwen3VL-2B-Instruct-Q4_K_M.gguf",
+    "--offline",
+    "--no-mmproj",
+    "--no-webui",
+    "--host",
+    "127.0.0.1",
+    "--port",
+    "8778",
+    "--ctx-size",
+    "4096",
+    "--parallel",
+    "1",
+    "--n-gpu-layers",
+    "99",
+    "--threads",
+    "6"
+  ],
+  "status": "completed",
+  "gate": "FAILED_LITERAL_CONTRACT_NO_PRODUCTION_INTEGRATION",
+  "gate_rule": "Complete pass; >=95% valid JSON; zero unsupported names/quotes; 100% valid IDs; source-entailment audit required",
+  "metrics": {
+    "executed": 32,
+    "json_valid_rate": 1.0,
+    "literal_integrity_pass_count": 7,
+    "unsupported_name_rate": 0.5972222222222222,
+    "name_count": 72,
+    "unsupported_quote_rate": 0.010416666666666666,
+    "quote_count": 96,
+    "valid_id_rate": 1.0,
+    "reference_count": 128,
+    "invented_fact_rate": null,
+    "fact_audit": "PENDING_SOURCE_ENTAILMENT_REVIEW"
+  },
+  "total_seconds": 114.207,
+  "initialization_seconds": 3.157,
+  "scene_latency_seconds": {
+    "min": 1.488,
+    "median": 3.2409999999999997,
+    "max": 6.236,
+    "sum": 105.093
+  },
+  "peak_system_gpu_used_mib": 3142,
+  "gpu_measurement_scope": "System-wide dedicated VRAM, includes desktop/other applications; not per-process peak",
+  "baseline_gpu": {
+    "available": true,
+    "scope": "system",
+    "name": "NVIDIA GeForce RTX 3050 A Laptop GPU",
+    "used_mib": 1394,
+    "total_mib": 4094,
+    "gpu_percent": 1,
+    "encoder_percent": 0,
+    "decoder_percent": 0
+  },
+  "after_gpu": {
+    "available": true,
+    "scope": "system",
+    "name": "NVIDIA GeForce RTX 3050 A Laptop GPU",
+    "used_mib": 1302,
+    "total_mib": 4094,
+    "gpu_percent": 0,
+    "encoder_percent": 0,
+    "decoder_percent": 0
+  },
+  "gpu_samples": 226,
+  "rows": [
+    {
+      "scene_id": "SC_0001",
+      "start": 0.0,
+      "end": 34.66,
+      "line_count": 3,
+      "status": "executed",
+      "seconds": 3.03,
+      "audit": {
+        "json_valid": true,
+        "errors": [
+          "name absent from supplied scene text"
+        ],
+        "supported_names": 0,
+        "name_count": 2,
+        "valid_references": 4,
+        "reference_count": 4,
+        "supported_quotes": 3,
+        "quote_count": 3,
+        "fact_audit": "PENDING_SOURCE_ENTAILMENT_REVIEW"
+      },
+      "unsupported_name_entries": [
+        "MMO streamer",
+        "person"
+      ],
+      "usage": {
+        "completion_tokens": 197,
+        "prompt_tokens": 226,
+        "total_tokens": 423,
+        "prompt_tokens_details": {
+          "cached_tokens": 0
+        }
+      }
+    },
+    {
+      "scene_id": "SC_0002",
+      "start": 34.66,
+      "end": 44.294,
+      "line_count": 1,
+      "status": "executed",
+      "seconds": 1.911,
+      "audit": {
+        "json_valid": true,
+        "errors": [],
+        "supported_names": 2,
+        "name_count": 2,
+        "valid_references": 2,
+        "reference_count": 2,
+        "supported_quotes": 1,
+        "quote_count": 1,
+        "fact_audit": "PENDING_SOURCE_ENTAILMENT_REVIEW"
+      },
+      "unsupported_name_entries": [],
+      "usage": {
+        "completion_tokens": 104,
+        "prompt_tokens": 164,
+        "total_tokens": 268,
+        "prompt_tokens_details": {
+          "cached_tokens": 125
+        }
+      }
+    },
+    {
+      "scene_id": "SC_0003",
+      "start": 44.294,
+      "end": 112.237,
+      "line_count": 3,
+      "status": "executed",
+      "seconds": 2.889,
+      "audit": {
+        "json_valid": true,
+        "errors": [
+          "name absent from supplied scene text"
+        ],
+        "supported_names": 0,
+        "name_count": 2,
+        "valid_references": 4,
+        "reference_count": 4,
+        "supported_quotes": 3,
+        "quote_count": 3,
+        "fact_audit": "PENDING_SOURCE_ENTAILMENT_REVIEW"
+      },
+      "unsupported_name_entries": [
+        "Person A",
+        "Person B"
+      ],
+      "usage": {
+        "completion_tokens": 166,
+        "prompt_tokens": 207,
+        "total_tokens": 373,
+        "prompt_tokens_details": {
+          "cached_tokens": 125
+        }
+      }
+    },
+    {
+      "scene_id": "SC_0004",
+      "start": 112.237,
+      "end": 197.823,
+      "line_count": 12,
+      "status": "executed",
+      "seconds": 3.653,
+      "audit": {
+        "json_valid": true,
+        "errors": [],
+        "supported_names": 2,
+        "name_count": 2,
+        "valid_references": 5,
+        "reference_count": 5,
+        "supported_quotes": 4,
+        "quote_count": 4,
+        "fact_audit": "PENDING_SOURCE_ENTAILMENT_REVIEW"
+      },
+      "unsupported_name_entries": [],
+      "usage": {
+        "completion_tokens": 231,
+        "prompt_tokens": 408,
+        "total_tokens": 639,
+        "prompt_tokens_details": {
+          "cached_tokens": 125
+        }
+      }
+    },
+    {
+      "scene_id": "SC_0005",
+      "start": 197.823,
+      "end": 227.978,
+      "line_count": 10,
+      "status": "executed",
+      "seconds": 3.411,
+      "audit": {
+        "json_valid": true,
+        "errors": [
+          "name absent from supplied scene text"
+        ],
+        "supported_names": 0,
+        "name_count": 2,
+        "valid_references": 5,
+        "reference_count": 5,
+        "supported_quotes": 4,
+        "quote_count": 4,
+        "fact_audit": "PENDING_SOURCE_ENTAILMENT_REVIEW"
+      },
+      "unsupported_name_entries": [
+        "Person A",
+        "Person B"
+      ],
+      "usage": {
+        "completion_tokens": 209,
+        "prompt_tokens": 370,
+        "total_tokens": 579,
+        "prompt_tokens_details": {
+          "cached_tokens": 125
+        }
+      }
+    },
+    {
+      "scene_id": "SC_0006",
+      "start": 227.978,
+      "end": 240.0,
+      "line_count": 3,
+      "status": "executed",
+      "seconds": 2.82,
+      "audit": {
+        "json_valid": true,
+        "errors": [
+          "name absent from supplied scene text"
+        ],
+        "supported_names": 0,
+        "name_count": 2,
+        "valid_references": 4,
+        "reference_count": 4,
+        "supported_quotes": 3,
+        "quote_count": 3,
+        "fact_audit": "PENDING_SOURCE_ENTAILMENT_REVIEW"
+      },
+      "unsupported_name_entries": [
+        "Speaker A",
+        "Speaker B"
+      ],
+      "usage": {
+        "completion_tokens": 182,
+        "prompt_tokens": 210,
+        "total_tokens": 392,
+        "prompt_tokens_details": {
+          "cached_tokens": 125
+        }
+      }
+    },
+    {
+      "scene_id": "SC_0007",
+      "start": 240.0,
+      "end": 263.138,
+      "line_count": 3,
+      "status": "executed",
+      "seconds": 2.749,
+      "audit": {
+        "json_valid": true,
+        "errors": [
+          "name absent from supplied scene text"
+        ],
+        "supported_names": 0,
+        "name_count": 2,
+        "valid_references": 4,
+        "reference_count": 4,
+        "supported_quotes": 3,
+        "quote_count": 3,
+        "fact_audit": "PENDING_SOURCE_ENTAILMENT_REVIEW"
+      },
+      "unsupported_name_entries": [
+        "Character A",
+        "Character B"
+      ],
+      "usage": {
+        "completion_tokens": 172,
+        "prompt_tokens": 215,
+        "total_tokens": 387,
+        "prompt_tokens_details": {
+          "cached_tokens": 125
+        }
+      }
+    },
+    {
+      "scene_id": "SC_0008",
+      "start": 263.138,
+      "end": 278.403,
+      "line_count": 1,
+      "status": "executed",
+      "seconds": 1.77,
+      "audit": {
+        "json_valid": true,
+        "errors": [
+          "name absent from supplied scene text"
+        ],
+        "supported_names": 0,
+        "name_count": 2,
+        "valid_references": 2,
+        "reference_count": 2,
+        "supported_quotes": 1,
+        "quote_count": 1,
+        "fact_audit": "PENDING_SOURCE_ENTAILMENT_REVIEW"
+      },
+      "unsupported_name_entries": [
+        "Character A",
+        "Character B"
+      ],
+      "usage": {
+        "completion_tokens": 95,
+        "prompt_tokens": 155,
+        "total_tokens": 250,
+        "prompt_tokens_details": {
+          "cached_tokens": 125
+        }
+      }
+    },
+    {
+      "scene_id": "SC_0009",
+      "start": 278.403,
+      "end": 317.817,
+      "line_count": 16,
+      "status": "executed",
+      "seconds": 3.965,
+      "audit": {
+        "json_valid": true,
+        "errors": [
+          "name absent from supplied scene text",
+          "quote not present in cited source utterance"
+        ],
+        "supported_names": 0,
+        "name_count": 2,
+        "valid_references": 5,
+        "reference_count": 5,
+        "supported_quotes": 3,
+        "quote_count": 4,
+        "fact_audit": "PENDING_SOURCE_ENTAILMENT_REVIEW"
+      },
+      "unsupported_name_entries": [
+        "Player",
+        "NPC"
+      ],
+      "usage": {
+        "completion_tokens": 242,
+        "prompt_tokens": 506,
+        "total_tokens": 748,
+        "prompt_tokens_details": {
+          "cached_tokens": 125
+        }
+      }
+    },
+    {
+      "scene_id": "SC_0010",
+      "start": 317.817,
+      "end": 338.463,
+      "line_count": 7,
+      "status": "executed",
+      "seconds": 3.526,
+      "audit": {
+        "json_valid": true,
+        "errors": [
+          "name absent from supplied scene text"
+        ],
+        "supported_names": 0,
+        "name_count": 2,
+        "valid_references": 5,
+        "reference_count": 5,
+        "supported_quotes": 4,
+        "quote_count": 4,
+        "fact_audit": "PENDING_SOURCE_ENTAILMENT_REVIEW"
+      },
+      "unsupported_name_entries": [
+        "Character A",
+        "Character B"
+      ],
+      "usage": {
+        "completion_tokens": 219,
+        "prompt_tokens": 293,
+        "total_tokens": 512,
+        "prompt_tokens_details": {
+          "cached_tokens": 124
+        }
+      }
+    },
+    {
+      "scene_id": "SC_0011",
+      "start": 338.463,
+      "end": 419.919,
+      "line_count": 27,
+      "status": "executed",
+      "seconds": 5.218,
+      "audit": {
+        "json_valid": true,
+        "errors": [
+          "name absent from supplied scene text"
+        ],
+        "supported_names": 10,
+        "name_count": 12,
+        "valid_references": 5,
+        "reference_count": 5,
+        "supported_quotes": 4,
+        "quote_count": 4,
+        "fact_audit": "PENDING_SOURCE_ENTAILMENT_REVIEW"
+      },
+      "unsupported_name_entries": [
+        "player",
+        "two months"
+      ],
+      "usage": {
+        "completion_tokens": 316,
+        "prompt_tokens": 859,
+        "total_tokens": 1175,
+        "prompt_tokens_details": {
+          "cached_tokens": 125
+        }
+      }
+    },
+    {
+      "scene_id": "SC_0012",
+      "start": 419.919,
+      "end": 492.492,
+      "line_count": 29,
+      "status": "executed",
+      "seconds": 3.902,
+      "audit": {
+        "json_valid": true,
+        "errors": [
+          "name absent from supplied scene text"
+        ],
+        "supported_names": 0,
+        "name_count": 2,
+        "valid_references": 5,
+        "reference_count": 5,
+        "supported_quotes": 4,
+        "quote_count": 4,
+        "fact_audit": "PENDING_SOURCE_ENTAILMENT_REVIEW"
+      },
+      "unsupported_name_entries": [
+        "Character",
+        "Friend"
+      ],
+      "usage": {
+        "completion_tokens": 236,
+        "prompt_tokens": 850,
+        "total_tokens": 1086,
+        "prompt_tokens_details": {
+          "cached_tokens": 125
+        }
+      }
+    },
+    {
+      "scene_id": "SC_0013",
+      "start": 492.492,
+      "end": 507.257,
+      "line_count": 6,
+      "status": "executed",
+      "seconds": 3.175,
+      "audit": {
+        "json_valid": true,
+        "errors": [
+          "name absent from supplied scene text"
+        ],
+        "supported_names": 0,
+        "name_count": 2,
+        "valid_references": 5,
+        "reference_count": 5,
+        "supported_quotes": 4,
+        "quote_count": 4,
+        "fact_audit": "PENDING_SOURCE_ENTAILMENT_REVIEW"
+      },
+      "unsupported_name_entries": [
+        "Character",
+        "System"
+      ],
+      "usage": {
+        "completion_tokens": 184,
+        "prompt_tokens": 265,
+        "total_tokens": 449,
+        "prompt_tokens_details": {
+          "cached_tokens": 125
+        }
+      }
+    },
+    {
+      "scene_id": "SC_0014",
+      "start": 507.257,
+      "end": 558.808,
+      "line_count": 24,
+      "status": "executed",
+      "seconds": 4.953,
+      "audit": {
+        "json_valid": true,
+        "errors": [
+          "name absent from supplied scene text"
+        ],
+        "supported_names": 2,
+        "name_count": 3,
+        "valid_references": 5,
+        "reference_count": 5,
+        "supported_quotes": 4,
+        "quote_count": 4,
+        "fact_audit": "PENDING_SOURCE_ENTAILMENT_REVIEW"
+      },
+      "unsupported_name_entries": [
+        "friend"
+      ],
+      "usage": {
+        "completion_tokens": 288,
+        "prompt_tokens": 692,
+        "total_tokens": 980,
+        "prompt_tokens_details": {
+          "cached_tokens": 125
+        }
+      }
+    },
+    {
+      "scene_id": "SC_0015",
+      "start": 558.808,
+      "end": 667.041,
+      "line_count": 37,
+      "status": "executed",
+      "seconds": 5.248,
+      "audit": {
+        "json_valid": true,
+        "errors": [
+          "name absent from supplied scene text"
+        ],
+        "supported_names": 0,
+        "name_count": 4,
+        "valid_references": 5,
+        "reference_count": 5,
+        "supported_quotes": 4,
+        "quote_count": 4,
+        "fact_audit": "PENDING_SOURCE_ENTAILMENT_REVIEW"
+      },
+      "unsupported_name_entries": [
+        "Player",
+        "Friend",
+        "Sister",
+        "Mom"
+      ],
+      "usage": {
+        "completion_tokens": 290,
+        "prompt_tokens": 1033,
+        "total_tokens": 1323,
+        "prompt_tokens_details": {
+          "cached_tokens": 125
+        }
+      }
+    },
+    {
+      "scene_id": "SC_0016",
+      "start": 667.041,
+      "end": 701.2,
+      "line_count": 1,
+      "status": "executed",
+      "seconds": 1.601,
+      "audit": {
+        "json_valid": true,
+        "errors": [
+          "name absent from supplied scene text"
+        ],
+        "supported_names": 0,
+        "name_count": 1,
+        "valid_references": 2,
+        "reference_count": 2,
+        "supported_quotes": 1,
+        "quote_count": 1,
+        "fact_audit": "PENDING_SOURCE_ENTAILMENT_REVIEW"
+      },
+      "unsupported_name_entries": [
+        "character"
+      ],
+      "usage": {
+        "completion_tokens": 80,
+        "prompt_tokens": 155,
+        "total_tokens": 235,
+        "prompt_tokens_details": {
+          "cached_tokens": 125
+        }
+      }
+    },
+    {
+      "scene_id": "SC_0017",
+      "start": 701.2,
+      "end": 717.842,
+      "line_count": 1,
+      "status": "executed",
+      "seconds": 1.63,
+      "audit": {
+        "json_valid": true,
+        "errors": [
+          "name absent from supplied scene text"
+        ],
+        "supported_names": 0,
+        "name_count": 1,
+        "valid_references": 2,
+        "reference_count": 2,
+        "supported_quotes": 1,
+        "quote_count": 1,
+        "fact_audit": "PENDING_SOURCE_ENTAILMENT_REVIEW"
+      },
+      "unsupported_name_entries": [
+        "character"
+      ],
+      "usage": {
+        "completion_tokens": 87,
+        "prompt_tokens": 158,
+        "total_tokens": 245,
+        "prompt_tokens_details": {
+          "cached_tokens": 125
+        }
+      }
+    },
+    {
+      "scene_id": "SC_0018",
+      "start": 717.842,
+      "end": 891.265,
+      "line_count": 45,
+      "status": "executed",
+      "seconds": 6.236,
+      "audit": {
+        "json_valid": true,
+        "errors": [],
+        "supported_names": 2,
+        "name_count": 2,
+        "valid_references": 5,
+        "reference_count": 5,
+        "supported_quotes": 4,
+        "quote_count": 4,
+        "fact_audit": "PENDING_SOURCE_ENTAILMENT_REVIEW"
+      },
+      "unsupported_name_entries": [],
+      "usage": {
+        "completion_tokens": 364,
+        "prompt_tokens": 1324,
+        "total_tokens": 1688,
+        "prompt_tokens_details": {
+          "cached_tokens": 125
+        }
+      }
+    },
+    {
+      "scene_id": "SC_0019",
+      "start": 891.265,
+      "end": 941.315,
+      "line_count": 13,
+      "status": "executed",
+      "seconds": 4.875,
+      "audit": {
+        "json_valid": true,
+        "errors": [
+          "name absent from supplied scene text"
+        ],
+        "supported_names": 1,
+        "name_count": 2,
+        "valid_references": 5,
+        "reference_count": 5,
+        "supported_quotes": 4,
+        "quote_count": 4,
+        "fact_audit": "PENDING_SOURCE_ENTAILMENT_REVIEW"
+      },
+      "unsupported_name_entries": [
+        "character"
+      ],
+      "usage": {
+        "completion_tokens": 287,
+        "prompt_tokens": 490,
+        "total_tokens": 777,
+        "prompt_tokens_details": {
+          "cached_tokens": 125
+        }
+      }
+    },
+    {
+      "scene_id": "SC_0020",
+      "start": 941.315,
+      "end": 955.079,
+      "line_count": 1,
+      "status": "executed",
+      "seconds": 1.608,
+      "audit": {
+        "json_valid": true,
+        "errors": [],
+        "supported_names": 1,
+        "name_count": 1,
+        "valid_references": 2,
+        "reference_count": 2,
+        "supported_quotes": 1,
+        "quote_count": 1,
+        "fact_audit": "PENDING_SOURCE_ENTAILMENT_REVIEW"
+      },
+      "unsupported_name_entries": [],
+      "usage": {
+        "completion_tokens": 82,
+        "prompt_tokens": 156,
+        "total_tokens": 238,
+        "prompt_tokens_details": {
+          "cached_tokens": 124
+        }
+      }
+    },
+    {
+      "scene_id": "SC_0021",
+      "start": 955.079,
+      "end": 972.722,
+      "line_count": 4,
+      "status": "executed",
+      "seconds": 3.307,
+      "audit": {
+        "json_valid": true,
+        "errors": [
+          "name absent from supplied scene text"
+        ],
+        "supported_names": 1,
+        "name_count": 2,
+        "valid_references": 5,
+        "reference_count": 5,
+        "supported_quotes": 4,
+        "quote_count": 4,
+        "fact_audit": "PENDING_SOURCE_ENTAILMENT_REVIEW"
+      },
+      "unsupported_name_entries": [
+        "the other person"
+      ],
+      "usage": {
+        "completion_tokens": 204,
+        "prompt_tokens": 223,
+        "total_tokens": 427,
+        "prompt_tokens_details": {
+          "cached_tokens": 125
+        }
+      }
+    },
+    {
+      "scene_id": "SC_0022",
+      "start": 972.722,
+      "end": 1036.535,
+      "line_count": 18,
+      "status": "executed",
+      "seconds": 4.649,
+      "audit": {
+        "json_valid": true,
+        "errors": [
+          "name absent from supplied scene text"
+        ],
+        "supported_names": 2,
+        "name_count": 3,
+        "valid_references": 5,
+        "reference_count": 5,
+        "supported_quotes": 4,
+        "quote_count": 4,
+        "fact_audit": "PENDING_SOURCE_ENTAILMENT_REVIEW"
+      },
+      "unsupported_name_entries": [
+        "the developer"
+      ],
+      "usage": {
+        "completion_tokens": 269,
+        "prompt_tokens": 625,
+        "total_tokens": 894,
+        "prompt_tokens_details": {
+          "cached_tokens": 125
+        }
+      }
+    },
+    {
+      "scene_id": "SC_0023",
+      "start": 1036.535,
+      "end": 1073.447,
+      "line_count": 3,
+      "status": "executed",
+      "seconds": 2.933,
+      "audit": {
+        "json_valid": true,
+        "errors": [
+          "name absent from supplied scene text"
+        ],
+        "supported_names": 0,
+        "name_count": 2,
+        "valid_references": 4,
+        "reference_count": 4,
+        "supported_quotes": 3,
+        "quote_count": 3,
+        "fact_audit": "PENDING_SOURCE_ENTAILMENT_REVIEW"
+      },
+      "unsupported_name_entries": [
+        "speaker",
+        "players"
+      ],
+      "usage": {
+        "completion_tokens": 181,
+        "prompt_tokens": 222,
+        "total_tokens": 403,
+        "prompt_tokens_details": {
+          "cached_tokens": 125
+        }
+      }
+    },
+    {
+      "scene_id": "SC_0024",
+      "start": 1073.447,
+      "end": 1121.495,
+      "line_count": 6,
+      "status": "executed",
+      "seconds": 4.097,
+      "audit": {
+        "json_valid": true,
+        "errors": [
+          "name absent from supplied scene text"
+        ],
+        "supported_names": 1,
+        "name_count": 3,
+        "valid_references": 5,
+        "reference_count": 5,
+        "supported_quotes": 4,
+        "quote_count": 4,
+        "fact_audit": "PENDING_SOURCE_ENTAILMENT_REVIEW"
+      },
+      "unsupported_name_entries": [
+        "the man",
+        "the speaker"
+      ],
+      "usage": {
+        "completion_tokens": 255,
+        "prompt_tokens": 298,
+        "total_tokens": 553,
+        "prompt_tokens_details": {
+          "cached_tokens": 125
+        }
+      }
+    },
+    {
+      "scene_id": "SC_0025",
+      "start": 1121.495,
+      "end": 1140.514,
+      "line_count": 5,
+      "status": "executed",
+      "seconds": 3.518,
+      "audit": {
+        "json_valid": true,
+        "errors": [
+          "name absent from supplied scene text"
+        ],
+        "supported_names": 1,
+        "name_count": 2,
+        "valid_references": 5,
+        "reference_count": 5,
+        "supported_quotes": 4,
+        "quote_count": 4,
+        "fact_audit": "PENDING_SOURCE_ENTAILMENT_REVIEW"
+      },
+      "unsupported_name_entries": [
+        "the other person"
+      ],
+      "usage": {
+        "completion_tokens": 215,
+        "prompt_tokens": 248,
+        "total_tokens": 463,
+        "prompt_tokens_details": {
+          "cached_tokens": 125
+        }
+      }
+    },
+    {
+      "scene_id": "SC_0026",
+      "start": 1140.514,
+      "end": 1195.194,
+      "line_count": 13,
+      "status": "executed",
+      "seconds": 3.672,
+      "audit": {
+        "json_valid": true,
+        "errors": [
+          "name absent from supplied scene text"
+        ],
+        "supported_names": 0,
+        "name_count": 2,
+        "valid_references": 5,
+        "reference_count": 5,
+        "supported_quotes": 4,
+        "quote_count": 4,
+        "fact_audit": "PENDING_SOURCE_ENTAILMENT_REVIEW"
+      },
+      "unsupported_name_entries": [
+        "Character 1",
+        "Character 2"
+      ],
+      "usage": {
+        "completion_tokens": 228,
+        "prompt_tokens": 542,
+        "total_tokens": 770,
+        "prompt_tokens_details": {
+          "cached_tokens": 125
+        }
+      }
+    },
+    {
+      "scene_id": "SC_0027",
+      "start": 1195.194,
+      "end": 1237.361,
+      "line_count": 15,
+      "status": "executed",
+      "seconds": 4.668,
+      "audit": {
+        "json_valid": true,
+        "errors": [],
+        "supported_names": 2,
+        "name_count": 2,
+        "valid_references": 5,
+        "reference_count": 5,
+        "supported_quotes": 4,
+        "quote_count": 4,
+        "fact_audit": "PENDING_SOURCE_ENTAILMENT_REVIEW"
+      },
+      "unsupported_name_entries": [],
+      "usage": {
+        "completion_tokens": 264,
+        "prompt_tokens": 514,
+        "total_tokens": 778,
+        "prompt_tokens_details": {
+          "cached_tokens": 125
+        }
+      }
+    },
+    {
+      "scene_id": "SC_0028",
+      "start": 1237.361,
+      "end": 1242.59,
+      "line_count": 1,
+      "status": "executed",
+      "seconds": 1.82,
+      "audit": {
+        "json_valid": true,
+        "errors": [],
+        "supported_names": 1,
+        "name_count": 1,
+        "valid_references": 2,
+        "reference_count": 2,
+        "supported_quotes": 1,
+        "quote_count": 1,
+        "fact_audit": "PENDING_SOURCE_ENTAILMENT_REVIEW"
+      },
+      "unsupported_name_entries": [],
+      "usage": {
+        "completion_tokens": 97,
+        "prompt_tokens": 158,
+        "total_tokens": 255,
+        "prompt_tokens_details": {
+          "cached_tokens": 125
+        }
+      }
+    },
+    {
+      "scene_id": "SC_0029",
+      "start": 1242.59,
+      "end": 1273.522,
+      "line_count": 3,
+      "status": "executed",
+      "seconds": 3.123,
+      "audit": {
+        "json_valid": true,
+        "errors": [
+          "name absent from supplied scene text"
+        ],
+        "supported_names": 0,
+        "name_count": 2,
+        "valid_references": 4,
+        "reference_count": 4,
+        "supported_quotes": 3,
+        "quote_count": 3,
+        "fact_audit": "PENDING_SOURCE_ENTAILMENT_REVIEW"
+      },
+      "unsupported_name_entries": [
+        "Person 1",
+        "Person 2"
+      ],
+      "usage": {
+        "completion_tokens": 188,
+        "prompt_tokens": 214,
+        "total_tokens": 402,
+        "prompt_tokens_details": {
+          "cached_tokens": 125
+        }
+      }
+    },
+    {
+      "scene_id": "SC_0030",
+      "start": 1273.522,
+      "end": 1297.421,
+      "line_count": 2,
+      "status": "executed",
+      "seconds": 2.087,
+      "audit": {
+        "json_valid": true,
+        "errors": [
+          "name absent from supplied scene text"
+        ],
+        "supported_names": 0,
+        "name_count": 1,
+        "valid_references": 3,
+        "reference_count": 3,
+        "supported_quotes": 2,
+        "quote_count": 2,
+        "fact_audit": "PENDING_SOURCE_ENTAILMENT_REVIEW"
+      },
+      "unsupported_name_entries": [
+        "Character"
+      ],
+      "usage": {
+        "completion_tokens": 123,
+        "prompt_tokens": 177,
+        "total_tokens": 300,
+        "prompt_tokens_details": {
+          "cached_tokens": 124
+        }
+      }
+    },
+    {
+      "scene_id": "SC_0031",
+      "start": 1297.421,
+      "end": 1306.013,
+      "line_count": 1,
+      "status": "executed",
+      "seconds": 1.561,
+      "audit": {
+        "json_valid": true,
+        "errors": [
+          "name absent from supplied scene text"
+        ],
+        "supported_names": 0,
+        "name_count": 1,
+        "valid_references": 2,
+        "reference_count": 2,
+        "supported_quotes": 1,
+        "quote_count": 1,
+        "fact_audit": "PENDING_SOURCE_ENTAILMENT_REVIEW"
+      },
+      "unsupported_name_entries": [
+        "character"
+      ],
+      "usage": {
+        "completion_tokens": 79,
+        "prompt_tokens": 156,
+        "total_tokens": 235,
+        "prompt_tokens_details": {
+          "cached_tokens": 125
+        }
+      }
+    },
+    {
+      "scene_id": "SC_0032",
+      "start": 1306.013,
+      "end": 1316.86,
+      "line_count": 0,
+      "status": "NOT_RUN_NO_DIALOGUE"
+    },
+    {
+      "scene_id": "SC_0033",
+      "start": 1316.86,
+      "end": 1317.17,
+      "line_count": 0,
+      "status": "NOT_RUN_NO_DIALOGUE"
+    },
+    {
+      "scene_id": "SC_0034",
+      "start": 1317.17,
+      "end": 1358.357,
+      "line_count": 0,
+      "status": "NOT_RUN_NO_DIALOGUE"
+    },
+    {
+      "scene_id": "SC_0035",
+      "start": 1358.357,
+      "end": 1382.95,
+      "line_count": 0,
+      "status": "NOT_RUN_NO_DIALOGUE"
+    },
+    {
+      "scene_id": "SC_0036",
+      "start": 1382.95,
+      "end": 1383.39,
+      "line_count": 0,
+      "status": "NOT_RUN_NO_DIALOGUE"
+    },
+    {
+      "scene_id": "SC_0037",
+      "start": 1383.39,
+      "end": 1392.85,
+      "line_count": 0,
+      "status": "NOT_RUN_NO_DIALOGUE"
+    },
+    {
+      "scene_id": "SC_0038",
+      "start": 1392.85,
+      "end": 1395.978,
+      "line_count": 0,
+      "status": "NOT_RUN_NO_DIALOGUE"
+    },
+    {
+      "scene_id": "SC_0039",
+      "start": 1395.978,
+      "end": 1422.59,
+      "line_count": 1,
+      "status": "executed",
+      "seconds": 1.488,
+      "audit": {
+        "json_valid": true,
+        "errors": [],
+        "supported_names": 1,
+        "name_count": 1,
+        "valid_references": 2,
+        "reference_count": 2,
+        "supported_quotes": 1,
+        "quote_count": 1,
+        "fact_audit": "PENDING_SOURCE_ENTAILMENT_REVIEW"
+      },
+      "unsupported_name_entries": [],
+      "usage": {
+        "completion_tokens": 69,
+        "prompt_tokens": 156,
+        "total_tokens": 225,
+        "prompt_tokens_details": {
+          "cached_tokens": 125
+        }
+      }
+    }
+  ],
+  "unsupported_name_entries": {
+    "MMO streamer": 1,
+    "person": 1,
+    "Person A": 2,
+    "Person B": 2,
+    "Speaker A": 1,
+    "Speaker B": 1,
+    "Character A": 3,
+    "Character B": 3,
+    "Player": 2,
+    "NPC": 1,
+    "player": 1,
+    "two months": 1,
+    "Character": 3,
+    "Friend": 2,
+    "System": 1,
+    "friend": 1,
+    "Sister": 1,
+    "Mom": 1,
+    "character": 4,
+    "the other person": 2,
+    "the developer": 1,
+    "speaker": 1,
+    "players": 1,
+    "the man": 1,
+    "the speaker": 1,
+    "Character 1": 1,
+    "Character 2": 1,
+    "Person 1": 1,
+    "Person 2": 1
+  },
+  "benchmark_conditions": "Single pass on live desktop; unit suite began near end of pass. Observational timings, not a controlled performance comparison.",
+  "source_cache_hashes_unchanged": {
+    "analysis_cache.json": true,
+    "transcription.json": true
+  },
+  "raw_results_path": ".runtime/sprint3b/text-benchmark/results.json",
+  "raw_results_sha256": "70b1666e12c1a85491dffd038f683f479fc0a10500db8c5c4fb196979bc34218",
+  "human_known_moment_intervals": 0,
+  "owner_scene_descriptions": 2,
+  "model_options": [
+    {
+      "repo": "Qwen/Qwen3-4B-GGUF",
+      "revision": "bc640142c66e1fdd12af0bd68f40445458f3869b",
+      "filename": "Qwen3-4B-Q4_K_M.gguf",
+      "bytes": 2497280256,
+      "lfs": {
+        "sha256": "7485fe6f11af29433bc51cab58009521f205840f5b4ae3a32fa7f92e8534fdf5",
+        "size": 2497280256,
+        "pointerSize": 135
+      },
+      "license": "apache-2.0",
+      "source": "https://huggingface.co/Qwen/Qwen3-4B-GGUF/blob/bc640142c66e1fdd12af0bd68f40445458f3869b/Qwen3-4B-Q4_K_M.gguf"
+    },
+    {
+      "repo": "Qwen/Qwen3-8B-GGUF",
+      "revision": "7c41481f57cb95916b40956ab2f0b139b296d974",
+      "filename": "Qwen3-8B-Q4_K_M.gguf",
+      "bytes": 5027783488,
+      "lfs": {
+        "sha256": "d98cdcbd03e17ce47681435b5150e34c1417f50b5c0019dd560e4882c5745785",
+        "size": 5027783488,
+        "pointerSize": 135
+      },
+      "license": "apache-2.0",
+      "source": "https://huggingface.co/Qwen/Qwen3-8B-GGUF/blob/7c41481f57cb95916b40956ab2f0b139b296d974/Qwen3-8B-Q4_K_M.gguf"
+    }
+  ],
+  "downloads_performed": false,
+  "production_selector_changed": false
+}
