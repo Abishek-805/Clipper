@@ -6,6 +6,7 @@ import json
 from pathlib import Path
 import re
 import unicodedata
+from datetime import datetime, timezone
 
 from structure import label, write_json, zone_check
 
@@ -54,16 +55,44 @@ def assess_tracks(structure):
                 kind, reason = "dialogue", "English metadata and substantial non-song Latin-script dialogue"
             else:
                 reason = "Dialogue-like content, but language metadata is absent/conflicting; explicit review required"
+        confirmation = next((r for r in structure.get("subtitle_confirmations", [])
+                             if r.get("source_hash") == structure.get("source_hash") and r.get("stream_index") == track["index"]), None)
+        if confirmation and confirmation.get("decision") == "english_dialogue" and cues:
+            kind, reason = "dialogue", "Owner confirmed this source hash and track as English dialogue"
+        elif confirmation and confirmation.get("decision") == "not_dialogue":
+            kind, reason = "not dialogue", "Owner rejected this source hash and track as dialogue"
+        sample_pool = [c for c in cues if len(c["text"]) >= 20] or cues
+        positions = sorted({round(i * (len(sample_pool) - 1) / 4) for i in range(5)}) if sample_pool else []
         output.append({"index": track["index"], "language": track.get("language"), "title": track.get("title"),
                        "codec": track.get("codec"), "default": track.get("default", False), "forced": track.get("forced", False),
+                       "owner_confirmation": confirmation.get("decision") if confirmation else None,
+                       "samples": [sample_pool[i] for i in positions],
                        "classification": kind, "reason": reason, "dialogue_cue_count": len(cues), "cues": cues,
                        "style_counts": track.get("style_counts", {})})
     return output
 
 
+def confirm_track(structure, stream_index, decision):
+    if type(stream_index) is not int or decision not in ("english_dialogue", "not_dialogue", "unreviewed"):
+        raise ValueError("Choose a subtitle stream and an explicit review decision")
+    track = next((t for t in assess_tracks(structure) if t["index"] == stream_index), None)
+    if track is None or (decision == "english_dialogue" and not track["dialogue_cue_count"]):
+        raise ValueError("This track has no usable dialogue cues")
+    records = [r for r in structure.get("subtitle_confirmations", []) if not
+               (r.get("source_hash") == structure["source_hash"] and r.get("stream_index") == stream_index)]
+    if decision != "unreviewed":
+        records.append(dict(source_hash=structure["source_hash"], stream_index=stream_index, decision=decision,
+                            confirmed_at=datetime.now(timezone.utc).isoformat()))
+    write_json(structure["confirmation_file"], records)
+    return records
+
+
 def choose_dialogue(structure, words):
     tracks = assess_tracks(structure)
     usable = [t for t in tracks if t["classification"] == "dialogue"]
+    confirmed = [t for t in usable if t["owner_confirmation"] == "english_dialogue"]
+    if confirmed:
+        usable = confirmed
     if len(usable) == 1:
         selected = usable[0]
         return {"source": "release subtitles", "stream_index": selected["index"],

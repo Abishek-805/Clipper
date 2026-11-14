@@ -221,6 +221,9 @@ def prepare_structure(path, cache_folder, job_folder=None):
         raise ValueError("Expected at most 500 zone override records")
     result = {**data, "overrides": records, "override_file": str(override_path),
               "active": apply_overrides(data["detected"], records, data["duration"])}
+    confirmation_path = Path(cache_folder) / f"subtitle-confirmations-{source_hash[:20]}.json"
+    result["confirmation_file"] = str(confirmation_path)
+    result["subtitle_confirmations"] = json.loads(confirmation_path.read_text(encoding="utf-8")) if confirmation_path.exists() else []
     if job_folder is not None:
         write_json(Path(job_folder) / "structure.json", result)
     return result

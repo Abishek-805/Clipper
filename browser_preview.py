@@ -357,12 +357,21 @@ class Handler(BaseHTTPRequestHandler):
             # Drain the small retired request so Windows does not reset the response socket.
             self.rfile.read(min(1024, int(self.headers.get("Content-Length", "0"))))
             return self._json({"error": "Use the browser Choose file button or paste a local path"}, 410)
-        if self.path in {"/api/manual", "/api/restore", "/api/glossary", "/api/export", "/api/zones"}:
+        if self.path in {"/api/manual", "/api/restore", "/api/glossary", "/api/export", "/api/zones", "/api/subtitle-confirmation"}:
             try:
                 body = json.loads(self.rfile.read(int(self.headers.get("Content-Length", "0"))) or b"{}")
                 with _LOCK:
                     if _STATE.get("state") == "running" or _STATE.get("rendering") or _STATE.get("importing"):
                         return self._json({"error": "An operation is already running"}, 409)
+                    if self.path == "/api/subtitle-confirmation":
+                        from dialogue import confirm_track
+                        source, _ = _probe_source(body.get("source", ""))
+                        key = hashlib.sha256(str(source.resolve()).casefold().encode()).hexdigest()[:20]
+                        value = prepare_structure(source, ANALYSIS_CACHE / key)
+                        if body.get("source_hash") != value["source_hash"]:
+                            raise ValueError("Source changed since samples were displayed; inspect it again")
+                        confirm_track(value, body.get("stream_index"), body.get("decision"))
+                        return self._json({"ok": True})
                     if self.path == "/api/zones":
                         source, _ = _probe_source(body.get("source", ""))
                         key = hashlib.sha256(str(source.resolve()).casefold().encode()).hexdigest()[:20]

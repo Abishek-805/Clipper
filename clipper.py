@@ -1546,6 +1546,7 @@ def process_video(path: Path, output_root: Path, model_size: str, clip_count: in
         structure = {"active": [], "detected": [], "status": "unavailable", "reason": str(exc)}
         progress(f"Structure inspection unavailable; unknown regions stay eligible: {exc}")
     settings["zone_overrides"] = structure.get("overrides", [])
+    settings["subtitle_confirmations"] = structure.get("subtitle_confirmations", [])
     structure["filter_enabled"] = structure_filter_enabled
     _write_manifest(folder / "structure.json", structure)
     if caption_source == "Release subtitles":

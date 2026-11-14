@@ -6,7 +6,7 @@ import threading
 from unittest.mock import patch
 
 from clipper import Word
-from dialogue import assess_tracks, build_units, choose_dialogue, clipped_cues, release_cues, save_units
+from dialogue import assess_tracks, build_units, choose_dialogue, clipped_cues, release_cues, save_units, confirm_track
 
 
 def fixture(language="eng"):
@@ -17,6 +17,40 @@ def fixture(language="eng"):
 
 
 class DialogueTests(unittest.TestCase):
+    def test_confirmation_persists_only_for_exact_source_and_track(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            data = fixture("jpn")
+            data["confirmation_file"] = str(Path(tmp) / "confirmations.json")
+            self.assertEqual(choose_dialogue(data, [])["source"], "unavailable")
+            confirm_track(data, 3, "english_dialogue")
+            data["subtitle_confirmations"] = json.loads(Path(data["confirmation_file"]).read_text())
+            self.assertEqual(choose_dialogue(data, [])["stream_index"], 3)
+            data["source_hash"] = "b" * 64
+            self.assertEqual(choose_dialogue(data, [])["source"], "unavailable")
+            data["source_hash"] = "a" * 64
+            data["tracks"][0]["index"] = 4
+            self.assertEqual(choose_dialogue(data, [])["source"], "unavailable")
+
+    def test_rejection_and_clear_override_heuristics(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            data = fixture()
+            data["confirmation_file"] = str(Path(tmp) / "confirmations.json")
+            data["subtitle_confirmations"] = confirm_track(data, 3, "not_dialogue")
+            self.assertEqual(choose_dialogue(data, [])["source"], "unavailable")
+            data["subtitle_confirmations"] = confirm_track(data, 3, "unreviewed")
+            self.assertEqual(choose_dialogue(data, [])["stream_index"], 3)
+            for index, decision in ((True, "english_dialogue"), (99, "english_dialogue"), (3, "automatic")):
+                with self.assertRaises(ValueError):
+                    confirm_track(data, index, decision)
+
+    def test_confirmation_samples_are_five_source_cues(self):
+        data = fixture("jpn")
+        result = assess_tracks(data)[0]
+        self.assertEqual(len(result["samples"]), 5)
+        self.assertEqual(result["classification"], "unknown")
+        self.assertTrue(all(c["text"] in [source["text"] for source in data["tracks"][0]["cues"]]
+                            for c in result["samples"]))
+
     def test_unique_dialogue_source_and_flags(self):
         data = fixture()
         self.assertEqual(choose_dialogue(data, [])["stream_index"], 3)
