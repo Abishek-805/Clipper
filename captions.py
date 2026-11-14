@@ -33,7 +33,7 @@ def choose_placement(obstructions: list[dict], override: str = "auto", previous:
 
 def anchor_override(anchor: str) -> str:
     return {"lower": r"{\an2\pos(540,1600)}", "middle": r"{\an5\pos(540,960)}",
-            "upper": r"{\an8\pos(540,420)}"}[anchor]
+            "upper": r"{\an8\pos(540,420)}", "center-lower": r"{\an5\pos(540,1380)}"}[anchor]
 
 
 def shot_placements(shots: list[dict], override: str = "auto") -> list[dict]:

@@ -3,11 +3,13 @@ from __future__ import annotations
 
 import json
 import hashlib
+import shutil
 import math
 import os
 import re
 import subprocess
 import threading
+import tempfile
 import time
 from bisect import bisect_left
 from dataclasses import asdict, dataclass
@@ -921,7 +923,8 @@ def rank_clips(duration: float, motion: list[float], audio: list[float], cuts: l
 
 def _ass_text(words: list[Word], start: float, end: float, style: str | None = None,
               placement: str | None = None, placements: list[dict] | None = None,
-              glossary: list[dict] | None = None) -> str:
+              glossary: list[dict] | None = None, caption_cues: list[dict] | None = None,
+              caption_position: str | None = None) -> str:
     style = style or os.getenv("CLIPPER_CAPTION_STYLE", "bold_pop")
     placement = placement or os.getenv("CLIPPER_CAPTION_PLACEMENT", "auto")
     if style not in PRESETS:
@@ -931,8 +934,19 @@ def _ass_text(words: list[Word], start: float, end: float, style: str | None = N
     if placement == "auto":
         placement = "lower"
     events = []
-    groups = group_words(words, start, end, style)
-    for line, (cue_start, cue_end) in zip(groups, cue_times(groups, start, end)):
+    groups = group_words(words, start, end, style) if caption_cues is None else []
+    cues = ([{"start": start + cue_start, "end": start + cue_end,
+              "text": "\\N".join(caption_lines(line)), "words": line}
+             for line, (cue_start, cue_end) in zip(groups, cue_times(groups, start, end))]
+            if caption_cues is None else caption_cues)
+    for cue in cues:
+        cue_start, cue_end = cue["start"] - start, cue["end"] - start
+        if caption_cues is not None:
+            text, _ = apply_replacements(cue["text"], glossary or [], len(events) + 1)
+            text = r"\N".join(_ass_escape(line) for line in text.splitlines())
+            events.append(f"Dialogue: 0,{_ass_time(cue_start)},{_ass_time(cue_end)},Default,,0,0,0,,{anchor_override(caption_position or placement)}{text}")
+            continue
+        line = cue["words"]
         karaoke = style != "cinematic_minimal"
         def ass_line(items):
             prefixes = [f"{{\\kf{max(1, round((word.end - word.start) * 100))}}}" if karaoke else ""
@@ -962,17 +976,22 @@ def _ass_time(seconds: float) -> str:
 
 
 def _srt(words: list[Word], start: float, end: float, style: str | None = None,
-         glossary: list[dict] | None = None, applied: list[dict] | None = None) -> str:
+         glossary: list[dict] | None = None, applied: list[dict] | None = None,
+         caption_cues: list[dict] | None = None) -> str:
     style = style or os.getenv("CLIPPER_CAPTION_STYLE", "bold_pop")
     if style not in PRESETS:
         style = "bold_pop"
-    chunks = group_words(words, start, end, style)
+    chunks = group_words(words, start, end, style) if caption_cues is None else []
     def stamp(s: float) -> str:
         ms = max(0, int(s * 1000)); h, ms = divmod(ms, 3600000); m, ms = divmod(ms, 60000); sec, ms = divmod(ms, 1000)
         return f"{h:02}:{m:02}:{sec:02},{ms:03}"
     entries = []
-    for i, (chunk, (cue_start, cue_end)) in enumerate(zip(chunks, cue_times(chunks, start, end)), 1):
-        caption = "\n".join(caption_lines(chunk))
+    cues = ([{"start": start + cue_start, "end": start + cue_end, "text": "\n".join(caption_lines(chunk))}
+             for chunk, (cue_start, cue_end) in zip(chunks, cue_times(chunks, start, end))]
+            if caption_cues is None else caption_cues)
+    for i, cue in enumerate(cues, 1):
+        cue_start, cue_end = cue["start"] - start, cue["end"] - start
+        caption = cue["text"]
         caption, replacements = apply_replacements(caption, glossary or [], i)
         if applied is not None:
             applied.extend(replacements)
@@ -1151,7 +1170,8 @@ def _render_filter(info: VideoInfo, clip: dict, ass_path: Path, reframe_plan: di
 def render(path: Path, output: Path, info: VideoInfo, clip: dict, words: list[Word], has_audio: bool,
            cancel: threading.Event, encoder: str = "auto", reframe_plan: dict | None = None,
            caption_shots: list[dict] | None = None, audio_index: int | None = None,
-           captions_required: bool = True) -> dict:
+           captions_required: bool = True, caption_cues: list[dict] | None = None,
+           caption_position: str | None = None) -> dict:
     output.parent.mkdir(parents=True, exist_ok=True)
     srt_path = output.with_suffix(".srt")
     temp_video = output.with_name(output.stem + ".partial" + output.suffix)
@@ -1162,10 +1182,14 @@ def render(path: Path, output: Path, info: VideoInfo, clip: dict, words: list[Wo
     glossary = load_glossary()
     applied_replacements = []
     temp_srt.write_text(_srt(words, clip["start"], clip["end"], glossary=glossary,
-                             applied=applied_replacements), encoding="utf-8")
-    placement = os.getenv("CLIPPER_CAPTION_PLACEMENT", "auto")
+                             applied=applied_replacements, caption_cues=caption_cues), encoding="utf-8")
+    placement = caption_position or os.getenv("CLIPPER_CAPTION_PLACEMENT", "auto")
+    position = placement
+    placement = {"bottom-safe": "lower", "center-lower": "middle"}.get(placement, placement)
     ass_path.write_text(_ass_text(words, clip["start"], clip["end"], placement=placement,
-                                  placements=caption_shots, glossary=glossary), encoding="utf-8-sig")
+                                  placements=caption_shots, glossary=glossary,
+                                  caption_cues=caption_cues,
+                                  caption_position={"bottom-safe": "lower", "center-lower": "center-lower"}.get(position)), encoding="utf-8-sig")
     try:
         filt = _render_filter(info, clip, ass_path, reframe_plan)
         cmd = ["ffmpeg", "-y", "-ss", f"{clip['start']:.3f}", "-i", str(path), "-t", f"{duration:.3f}", "-filter_complex", filt, "-map", "[v]", "-map_metadata", "-1", "-map_chapters", "-1"]
@@ -1202,6 +1226,145 @@ def render(path: Path, output: Path, info: VideoInfo, clip: dict, words: list[Wo
         temp_video.unlink(missing_ok=True)
         temp_srt.unlink(missing_ok=True)
         ass_path.unlink(missing_ok=True)
+
+
+def _srt_seconds(value: str) -> float:
+    hours, minutes, rest = value.split(":")
+    seconds, millis = rest.split(",")
+    return int(hours) * 3600 + int(minutes) * 60 + int(seconds) + int(millis) / 1000
+
+
+def _rerender_cues(value, start: float, end: float) -> list[dict] | None:
+    if value is None:
+        return None
+    if isinstance(value, list):
+        cues = value
+    elif isinstance(value, str):
+        matches = list(re.finditer(r"(?m)^\d+\s*\n(\d{2,}:\d{2}:\d{2},\d{3}) --> (\d{2,}:\d{2}:\d{2},\d{3})\s*\n(.+?)(?=\n\s*\n|\Z)", value.strip(), re.S))
+        cues = ([{"start": start + _srt_seconds(match.group(1)), "end": start + _srt_seconds(match.group(2)),
+                  "text": match.group(3).strip()} for match in matches]
+                if matches else [{"start": start, "end": end, "text": value.strip()}] if value.strip() else [])
+    else:
+        raise ValueError("Edited captions must be SRT text or a list of cue objects")
+    result = []
+    for cue in cues:
+        if not isinstance(cue, dict) or not isinstance(cue.get("text"), str):
+            raise ValueError("Each edited caption cue needs start, end and text")
+        cue_start, cue_end = float(cue["start"]), float(cue["end"])
+        text = cue["text"].strip()
+        if not math.isfinite(cue_start) or not math.isfinite(cue_end) or cue_start < start or cue_end > end or cue_start >= cue_end or not text:
+            raise ValueError("Edited caption cues must be non-empty and inside the selected clip")
+        result.append({"start": cue_start, "end": cue_end, "text": text})
+    if any(left["end"] > right["start"] for left, right in zip(result, result[1:])):
+        raise ValueError("Edited caption cue times must be ordered and non-overlapping")
+    return result
+
+
+def rerender_single_clip(job_dir: Path, clip_id: str, start_s: float, end_s: float,
+                         caption_cues_or_text=None, caption_position: str = "bottom-safe",
+                         allow_long_duration: bool = False, cancel: threading.Event | None = None) -> dict:
+    """Render one edited draft using only saved episode analysis and transcription data."""
+    job_dir = Path(job_dir).resolve(strict=True)
+    manifest_path = job_dir / "analysis.json"
+    if not manifest_path.is_file():
+        raise ValueError("Job manifest is missing")
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    clips = manifest.get("clips")
+    clip_record = next((item for item in clips or [] if item.get("filename") == clip_id or item.get("id") == clip_id), None)
+    if not isinstance(clip_record, dict):
+        raise ValueError(f"Clip not found in job manifest: {clip_id}")
+    output = _manifest_clip_path(job_dir, clip_record.get("filename"))
+    if output is None or not output.is_file():
+        raise ValueError("Clip output is missing or has an unsafe filename")
+    source = Path(manifest.get("source_path", "")).resolve(strict=True)
+    info = probe(source)
+    start_s, end_s = float(start_s), float(end_s)
+    duration = end_s - start_s
+    source_stat = source.stat()
+    if (manifest.get("source_size") is not None and manifest.get("source_size") != source_stat.st_size) or \
+            (manifest.get("source_mtime_ns") is not None and manifest.get("source_mtime_ns") != source_stat.st_mtime_ns):
+        raise ValueError("Source media changed since this job was created")
+    if not math.isfinite(start_s) or not math.isfinite(end_s) or start_s < 0 or end_s > info.duration or start_s >= end_s:
+        raise ValueError("Clip boundaries must be ordered and within the source duration")
+    maximum = 180 if allow_long_duration else 58
+    if duration > maximum:
+        raise ValueError(f"Clip duration exceeds the {maximum}s limit")
+    warnings = ["Shorts over 60 seconds with a Content ID claim can be blocked globally."] if duration > 60 else []
+    if caption_position not in {"bottom-safe", "center-lower"}:
+        raise ValueError("Caption position must be bottom-safe or center-lower")
+    caption_cues = _rerender_cues(caption_cues_or_text, start_s, end_s)
+    if caption_cues is None:
+        cache_key = hashlib.sha256(str(source).casefold().encode("utf-8")).hexdigest()[:20]
+        cache_root = Path(os.environ.get("LOCALAPPDATA", Path.home())) / "Clipper" / "analysis_cache" / cache_key
+        cache_path = cache_root / "transcription.json"
+        try:
+            cached_words = json.loads(cache_path.read_text(encoding="utf-8"))["words"]
+        except (OSError, json.JSONDecodeError, KeyError, TypeError) as exc:
+            raise ValueError("Cached transcription words are unavailable; rerender will not start transcription") from exc
+        words = [Word(float(item["start"]), float(item["end"]), str(item["text"])) for item in cached_words]
+    else:
+        words = []
+    stored_plan = clip_record.get("reframing") or (clip_record.get("render") or {}).get("reframe_plan") or {}
+    shots = []
+    for shot in stored_plan.get("shots", []):
+        left, right = max(start_s, float(shot["start"])), min(end_s, float(shot["end"]))
+        if right > left:
+            shots.append({**shot, "start": left, "end": right})
+    if shots:
+        shots[0]["start"], shots[-1]["end"] = start_s, end_s
+    else:
+        shots = [{"shot_id": 0, "start": start_s, "end": end_s, "composition": "full_frame_contain",
+                  "crop": None, "focus_path": [], "obstructions": []}]
+    reframe_plan = {**stored_plan, "shots": shots, "status": stored_plan.get("status", "saved_plan_reused")}
+    render_info = (clip_record.get("render") or {})
+    settings = manifest.get("settings") or {}
+    audio_index = settings.get("audio_stream_index")
+    temp_file = tempfile.NamedTemporaryFile(prefix="clipper-rerender-", suffix=".mp4", dir=job_dir, delete=False)
+    temporary = Path(temp_file.name)
+    temp_file.close()
+    try:
+        started = time.perf_counter()
+        result = render(source, temporary, info, {"start": start_s, "end": end_s}, words, info.has_audio,
+                        cancel or threading.Event(), settings.get("encoder", "auto"), reframe_plan,
+                        clip_record.get("caption_placements"), audio_index, True, caption_cues,
+                        caption_position)
+        if cancel and cancel.is_set():
+            raise InterruptedError("Rerender cancelled")
+        temporary_srt = temporary.with_suffix(".srt")
+        old_srt = output.with_suffix(".srt")
+        if not old_srt.is_file():
+            raise ValueError("Existing clip subtitle file is missing")
+        versions = [int(match.group(1)) for path in job_dir.glob(f"{output.stem}.v*.mp4")
+                    if (match := re.fullmatch(re.escape(output.stem) + r"\.v(\d+)\.mp4", path.name))]
+        version = max(versions, default=0) + 1
+        backup_mp4 = output.with_name(f"{output.stem}.v{version}.mp4")
+        backup_srt = old_srt.with_name(f"{output.stem}.v{version}.srt")
+        shutil.copy2(output, backup_mp4)
+        try:
+            shutil.copy2(old_srt, backup_srt)
+            os.replace(temporary, output)
+            os.replace(temporary_srt, old_srt)
+        except Exception:
+            if backup_mp4.exists():
+                shutil.copy2(backup_mp4, output)
+            if backup_srt.exists():
+                shutil.copy2(backup_srt, old_srt)
+            raise
+        history = clip_record.setdefault("edit_history", [])
+        history.append({"version": version, "edited_at": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
+                        "previous_start": clip_record.get("start"), "previous_end": clip_record.get("end"),
+                        "start": start_s, "end": end_s, "caption_position": caption_position,
+                        "caption_text_edited": caption_cues_or_text is not None,
+                        "glossary_replacements": result.get("glossary_replacements", [])})
+        clip_record.update(start=start_s, end=end_s, duration=duration,
+                           caption_position=caption_position, render=result)
+        _write_manifest(manifest_path, manifest)
+        return {**result, "rerender_seconds": round(time.perf_counter() - started, 3),
+                "version": version, "versioned_mp4": backup_mp4.name, "versioned_srt": backup_srt.name,
+                "warnings": warnings}
+    finally:
+        temporary.unlink(missing_ok=True)
+        temporary.with_suffix(".srt").unlink(missing_ok=True)
 
 
 def process_video(path: Path, output_root: Path, model_size: str, clip_count: int, min_length: int, max_length: int,
