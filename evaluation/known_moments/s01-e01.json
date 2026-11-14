@@ -1,0 +1,22 @@
+{
+  "schema": "clipper-known-moments-v1",
+  "source_hash": "28982060e5dcf4e743c7448859f1319b1726338d91c387f0bac15277360c0476",
+  "moments": [],
+  "pending_owner_descriptions": [
+    {
+      "label": "Game master explains the game",
+      "owner_description": "the time the game master explain about the game",
+      "start": null,
+      "end": null,
+      "status": "needs_owner_timestamps"
+    },
+    {
+      "label": "Hero and friend training conversation",
+      "owner_description": "the scence where the hero and his friend have little training convo",
+      "start": null,
+      "end": null,
+      "status": "needs_owner_timestamps"
+    }
+  ],
+  "instructions": "Add owner-confirmed source seconds and labels to moments. Do not copy previous selector/model intervals as human annotations. Pending descriptions are not scored. Two scenes were described by the owner; no timestamps were supplied. This is a spot-check template, not a full-episode benchmark."
+}
