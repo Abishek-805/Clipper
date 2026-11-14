@@ -1143,12 +1143,20 @@ def select_encoder(requested: str = "auto") -> tuple[str, str]:
     return "libx264", fallback
 
 
-def _render_filter(info: VideoInfo, clip: dict, ass_path: Path, reframe_plan: dict | None = None) -> str:
-    shots = (reframe_plan or {}).get("shots", [])
+def _render_filter(info: VideoInfo, clip: dict, ass_path: Path, reframe_plan: dict | None = None,
+                   render_preset: str = "standard") -> str:
+    if render_preset not in {"standard", "fast"}:
+        raise ValueError("Render preset must be standard or fast")
+    shots = []
+    for original in (reframe_plan or {}).get("shots", []):
+        shot = dict(original)
+        contain = shot.get("composition") not in {"subject_crop", "saliency_crop"} or not shot.get("crop")
+        if shots and contain and shots[-1].get("_contain") and abs(float(shots[-1]["end"]) - float(shot["start"])) <= .002:
+            shots[-1]["end"] = shot["end"]
+        else:
+            shots.append({**shot, "_contain": contain})
     if not shots:
-        return (f"[0:v]split=2[bg][fg];[bg]scale=1080:1920:force_original_aspect_ratio=increase,"
-                f"crop=1080:1920,boxblur=30:10[bg2];[fg]scale=1080:1920:force_original_aspect_ratio=decrease[fg2];"
-                f"[bg2][fg2]overlay=(W-w)/2:(H-h)/2,subtitles='{_escape_filter(ass_path)}',fps=30,format=yuv420p[v]")
+        shots = [{"start": clip["start"], "end": clip["end"], "composition": "full_frame_contain"}]
     pieces = []
     labels = []
     clip_start = float(clip["start"])
@@ -1179,14 +1187,18 @@ def _render_filter(info: VideoInfo, clip: dict, ass_path: Path, reframe_plan: di
         base = "[joined]"
         pieces.append("".join(labels) + f"concat=n={len(labels)}:v=1:a=0{base}")
     pieces.append(f"{base}subtitles='{_escape_filter(ass_path)}',fps=30,format=yuv420p[v]")
-    return ";".join(pieces)
+    graph = ";".join(pieces)
+    if render_preset == "fast":
+        graph = graph.replace("scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,boxblur=30:10",
+                              "scale=270:480:force_original_aspect_ratio=increase,crop=270:480,boxblur=8:3,scale=1080:1920")
+    return graph
 
 
 def render(path: Path, output: Path, info: VideoInfo, clip: dict, words: list[Word], has_audio: bool,
            cancel: threading.Event, encoder: str = "auto", reframe_plan: dict | None = None,
            caption_shots: list[dict] | None = None, audio_index: int | None = None,
            captions_required: bool = True, caption_cues: list[dict] | None = None,
-           caption_position: str | None = None) -> dict:
+           caption_position: str | None = None, render_preset: str = "standard", overlays: dict | None = None) -> dict:
     output.parent.mkdir(parents=True, exist_ok=True)
     srt_path = output.with_suffix(".srt")
     temp_video = output.with_name(output.stem + ".partial" + output.suffix)
@@ -1206,7 +1218,7 @@ def render(path: Path, output: Path, info: VideoInfo, clip: dict, words: list[Wo
                                   caption_cues=caption_cues,
                                   caption_position={"bottom-safe": "lower", "center-lower": "center-lower"}.get(position)), encoding="utf-8-sig")
     try:
-        filt = _render_filter(info, clip, ass_path, reframe_plan)
+        filt = _render_filter(info, clip, ass_path, reframe_plan, render_preset)
         cmd = ["ffmpeg", "-y", "-ss", f"{clip['start']:.3f}", "-i", str(path), "-t", f"{duration:.3f}", "-filter_complex", filt, "-map", "[v]", "-map_metadata", "-1", "-map_chapters", "-1"]
         if has_audio:
             if audio_index is None:
@@ -1232,7 +1244,7 @@ def render(path: Path, output: Path, info: VideoInfo, clip: dict, words: list[Wo
             raise InterruptedError("Processing cancelled")
         os.replace(temp_srt, srt_path)
         os.replace(temp_video, output)
-        return {**checked, "encoder": selected_encoder, "encoder_note": encoder_note,
+        return {**checked, "encoder": selected_encoder, "encoder_note": encoder_note, "render_preset": render_preset,
                 "glossary_replacements": applied_replacements,
                 "composition_modes": [shot.get("composition", "full_frame_contain") for shot in (reframe_plan or {}).get("shots", [])],
                 "reframe_plan": reframe_plan,
@@ -1277,7 +1289,8 @@ def _rerender_cues(value, start: float, end: float) -> list[dict] | None:
 
 def rerender_single_clip(job_dir: Path, clip_id: str, start_s: float, end_s: float,
                          caption_cues_or_text=None, caption_position: str = "bottom-safe",
-                         allow_long_duration: bool = False, cancel: threading.Event | None = None) -> dict:
+                         allow_long_duration: bool = False, cancel: threading.Event | None = None,
+                         render_preset: str = "standard", overlays: dict | None = None) -> dict:
     """Render one edited draft using only saved episode analysis and transcription data."""
     job_dir = Path(job_dir).resolve(strict=True)
     manifest_path = job_dir / "analysis.json"
@@ -1342,7 +1355,7 @@ def rerender_single_clip(job_dir: Path, clip_id: str, start_s: float, end_s: flo
         result = render(source, temporary, info, {"start": start_s, "end": end_s}, words, info.has_audio,
                         cancel or threading.Event(), settings.get("encoder", "auto"), reframe_plan,
                         clip_record.get("caption_placements"), audio_index, True, caption_cues,
-                        caption_position)
+                        caption_position, render_preset, overlays)
         if cancel and cancel.is_set():
             raise InterruptedError("Rerender cancelled")
         temporary_srt = temporary.with_suffix(".srt")

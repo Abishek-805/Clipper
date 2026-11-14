@@ -59,13 +59,13 @@ function appliedList(x){return esc((x.glossary_replacements||[]).map(r=>r.origin
 function drawDrafts(job,drafts){$('artifacts').innerHTML=drafts.map(function(x,i){
  const video='/files/'+encodeURIComponent(job)+'/'+encodeURIComponent(x.filename),srt='/files/'+encodeURIComponent(job)+'/'+encodeURIComponent(x.srt),status='edit-status-'+i;
  const start=Number(x.start)||0,end=Number(x.end)||0;
- return '<div class="draft"><p class="filename"><strong>'+esc(x.filename)+'</strong> · '+esc(x.technical_validation)+'</p><p>Provisional draft — rights not verified.</p><video id="clip-'+i+'" controls preload="metadata" src="'+video+'?v='+(x.edit_version||0)+'"></video><p><a href="'+srt+'">Open SRT</a> <a href="/files/'+encodeURIComponent(job)+'/analysis.json">analysis.json</a></p><div class="row"><div><label>Start · <span class="editor-times" id="start-time-'+i+'">'+clock(start)+'</span></label><input id="start-'+i+'" type="number" step="0.001" value="'+start+'"><div class="nudge">'+nudgeButtons(i,'start')+'</div></div><div><label>End · <span class="editor-times" id="end-time-'+i+'">'+clock(end)+'</span></label><input id="end-'+i+'" type="number" step="0.001" value="'+end+'"><div class="nudge">'+nudgeButtons(i,'end')+'</div></div></div><label for="captions-'+i+'">Caption cues · edit text and SRT times</label><textarea id="captions-'+i+'" spellcheck="false" placeholder="Loading SRT…"></textarea><label for="position-'+i+'">Caption position</label><select id="position-'+i+'"><option value="bottom-safe">Bottom safe</option><option value="center-lower">Center lower</option></select><button class="save-edit" data-index="'+i+'" data-clip="'+esc(x.filename)+'">Save &amp; Re-render Clip</button><span id="'+status+'" class="badge"></span><p>Applied glossary replacements: '+appliedList(x)+'</p></div>';
+ return '<div class="draft"><p class="filename"><strong>'+esc(x.filename)+'</strong> · '+esc(x.technical_validation)+'</p><p>Provisional draft — rights not verified.</p><video id="clip-'+i+'" controls preload="metadata" src="'+video+'?v='+(x.edit_version||0)+'"></video><p><a href="'+srt+'">Open SRT</a> <a href="/files/'+encodeURIComponent(job)+'/analysis.json">analysis.json</a></p><div class="row"><div><label>Start · <span class="editor-times" id="start-time-'+i+'">'+clock(start)+'</span></label><input id="start-'+i+'" type="number" step="0.001" value="'+start+'"><div class="nudge">'+nudgeButtons(i,'start')+'</div></div><div><label>End · <span class="editor-times" id="end-time-'+i+'">'+clock(end)+'</span></label><input id="end-'+i+'" type="number" step="0.001" value="'+end+'"><div class="nudge">'+nudgeButtons(i,'end')+'</div></div></div><label for="captions-'+i+'">Caption cues · edit text and SRT times</label><textarea id="captions-'+i+'" spellcheck="false" placeholder="Loading SRT…"></textarea><label for="position-'+i+'">Caption position</label><select id="position-'+i+'"><option value="bottom-safe">Bottom safe</option><option value="center-lower">Center lower</option></select><label>Render quality</label><select id="preset-'+i+'"><option value="standard">Standard</option><option value="fast">Fast · softer background</option></select><button class="save-edit" data-index="'+i+'" data-clip="'+esc(x.filename)+'">Save &amp; Re-render Clip</button><span id="'+status+'" class="badge"></span><p>Applied glossary replacements: '+appliedList(x)+'</p></div>';
  }).join('')||'<p>No validated drafts in this job.</p>'
  drafts.forEach(async(x,i)=>{let area=$(`captions-${i}`);try{area.value=await(await fetch(`/files/${encodeURIComponent(job)}/${encodeURIComponent(x.srt)}`)).text()}catch{area.value='Could not load SRT.'}area.dataset.dirty='false';let saved=JSON.parse(localStorage.getItem(editKey(job,x.filename))||'null');if(saved){area.value=saved.captions??area.value;area.dataset.dirty=saved.dirty;area.dataset.unsaved='true';$(`start-${i}`).value=saved.start;$(`end-${i}`).value=saved.end;$(`position-${i}`).value=saved.position}area.oninput=()=>{area.dataset.dirty='true';area.dataset.unsaved='true'}});
  $('artifacts').querySelectorAll('[data-nudge]').forEach(b=>b.onclick=()=>{let input=$(b.dataset.field);input.value=(Number(input.value)+Number(b.dataset.nudge)).toFixed(3);input.dataset.unsaved='true';let id=input.id.startsWith('start-')?'start-time-':'end-time-';$(id+input.id.split('-').pop()).textContent=clock(input.value)});
  $('artifacts').querySelectorAll('input[type=number]').forEach(input=>input.oninput=()=>{input.dataset.unsaved='true';let id=input.id.startsWith('start-')?'start-time-':'end-time-';$(id+input.id.split('-').pop()).textContent=clock(input.value)});
  $('artifacts').oninput=()=>drafts.forEach((x,i)=>{let area=$(`captions-${i}`);localStorage.setItem(editKey(job,x.filename),JSON.stringify({start:$(`start-${i}`).value,end:$(`end-${i}`).value,captions:area.value,dirty:area.dataset.dirty,position:$(`position-${i}`).value}))});
- $('artifacts').querySelectorAll('.save-edit').forEach(button=>button.onclick=async()=>{let i=button.dataset.index,captionStatus=$(`edit-status-${i}`);button.disabled=true;captionStatus.textContent='Saving and rendering…';try{let area=$(`captions-${i}`),response=await fetch('/api/rerender',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({job_id:job,clip_id:button.dataset.clip,start:Number($(`start-${i}`).value),end:Number($(`end-${i}`).value),captions:area.dataset.dirty==='true'?area.value:null,caption_position:$(`position-${i}`).value})});let data=await response.json();if(!response.ok)throw Error(data.error||'Rerender failed');captionStatus.textContent='Queued…'}catch(error){captionStatus.textContent=error.message;button.disabled=false}});
+ $('artifacts').querySelectorAll('.save-edit').forEach(button=>button.onclick=async()=>{let i=button.dataset.index,captionStatus=$(`edit-status-${i}`);button.disabled=true;captionStatus.textContent='Saving and rendering…';try{let area=$(`captions-${i}`),response=await fetch('/api/rerender',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({job_id:job,clip_id:button.dataset.clip,start:Number($(`start-${i}`).value),end:Number($(`end-${i}`).value),captions:area.dataset.dirty==='true'?area.value:null,caption_position:$(`position-${i}`).value,render_preset:$(`preset-${i}`).value})});let data=await response.json();if(!response.ok)throw Error(data.error||'Rerender failed');captionStatus.textContent='Queued…'}catch(error){captionStatus.textContent=error.message;button.disabled=false}});
 }
 async function poll(){try{let d=await(await fetch('/api/status')).json();if(!$('source').value&&d.report?.source_path){$('source').value=d.report.source_path;inspect()}$('status').textContent=d.status;$('logs').textContent=(d.logs||[]).slice(-30).join('\n');let m=d.model_status;$('model').textContent=m?`Whisper ${m.model}: ${m.device}/${m.compute_type}${m.fallback_reason?' · '+m.fallback_reason:''}`:'';$('cancel').disabled=d.state!=='running'&&!d.rendering;$('start').disabled=d.state==='running'||d.rendering||!$('meta').textContent;$('result').textContent=d.job_folder?`${d.rendering?'RENDERING EDIT':d.state.toUpperCase()} · ${d.job_folder}`:'No job run yet.';if(d.report){let e=d.report.drafts||[],key=d.job_id+JSON.stringify(e);if(key!==renderedKey&&!document.querySelector('[data-unsaved="true"]')){drawDrafts(d.job_id,e);renderedKey=key}document.querySelectorAll('.save-edit').forEach(button=>button.disabled=!!d.rendering);if(d.rerender_result){let i=e.findIndex(x=>x.filename===d.rerender_result.clip_id),target=document.getElementById(`edit-status-${i}`);if(target)target.textContent=d.rerender_result.error||`Rendered ${d.rerender_result.versioned_mp4||''}`}}}catch{}setTimeout(poll,1800)}poll();
 </script>"""
@@ -203,12 +203,12 @@ def _run_job(source: Path, audio_index: int | None, caption_mode: str, job_id: s
 
 
 def _run_rerender(job_id: str, clip_id: str, start: float, end: float, captions: str, position: str,
-                  cancel: threading.Event):
+                  cancel: threading.Event, preset: str = "standard"):
     global _CANCEL
     _publish(rendering=True, rerender_result=None, status=f"Re-rendering {clip_id}")
     try:
         result = rerender_single_clip(OUTPUT / "jobs" / job_id, clip_id, start, end,
-                                      captions, position, cancel=cancel)
+                                      captions, position, cancel=cancel, render_preset=preset)
         with _LOCK: report = dict(_STATE.get("report") or {})
         for draft in report.get("drafts", []):
             if draft.get("filename") == clip_id:
@@ -342,6 +342,9 @@ class Handler(BaseHTTPRequestHandler):
                 job_id, clip_id = body.get("job_id"), body.get("clip_id")
                 start, end = float(body.get("start")), float(body.get("end"))
                 position, captions = body.get("caption_position"), body.get("captions", "")
+                preset = body.get("render_preset", "standard")
+                if preset not in {"standard", "fast"}:
+                    raise ValueError("Choose a valid render preset")
                 if not isinstance(job_id, str) or job_id != _STATE.get("job_id") or not re.fullmatch(r"[A-Za-z0-9_-]{1,80}", job_id):
                     raise ValueError("Choose a clip from the current local job")
                 if not isinstance(clip_id, str) or Path(clip_id).name != clip_id or not clip_id.endswith(".mp4"):
@@ -365,7 +368,7 @@ class Handler(BaseHTTPRequestHandler):
                 _CANCEL = cancel
                 _STATE.update(rendering=True, rerender_result=None, status=f"Re-rendering {clip_id}")
             thread = threading.Thread(target=_run_rerender,
-                args=(job_id, clip_id, start, end, captions, position, cancel), daemon=True)
+                args=(job_id, clip_id, start, end, captions, position, cancel, preset), daemon=True)
             try:
                 thread.start()
             except RuntimeError as exc:

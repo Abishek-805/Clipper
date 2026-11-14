@@ -30,6 +30,17 @@ class SingleClipRerenderTests(unittest.TestCase):
                        "reframing": {"shots": [{"start": 0, "end": 1, "composition": "full_frame_contain"}]}}]}), encoding="utf-8")
         return source, job, output
 
+    def test_identical_contain_runs_merge_without_mutating_caption_plan(self):
+        info = clipper.VideoInfo(10, 320, 240, 24, False, 0)
+        plan = {"shots": [{"start": 0, "end": 1, "composition": "full_frame_contain"},
+                          {"start": 1, "end": 2, "composition": "full_frame_contain"}]}
+        graph = clipper._render_filter(info, {"start": 0, "end": 2}, Path("caption.ass"), plan)
+        self.assertNotIn("concat=", graph)
+        self.assertEqual(1, graph.count("boxblur="))
+        self.assertEqual(1, plan["shots"][0]["end"])
+        fast = clipper._render_filter(info, {"start": 0, "end": 2}, Path("caption.ass"), plan, "fast")
+        self.assertIn("crop=270:480", fast)
+
     @unittest.skipUnless(ffmpeg_path(), "FFmpeg unavailable")
     def test_manual_caption_is_burned_in_and_versioned(self):
         with tempfile.TemporaryDirectory() as tmp:
