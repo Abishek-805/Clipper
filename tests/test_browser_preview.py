@@ -28,6 +28,7 @@ class BrowserPreviewTests(unittest.TestCase):
             base = f"http://127.0.0.1:{server.server_address[1]}"
             page = urlopen(base + "/", timeout=3).read().decode()
             self.assertIn("Generate up to two provisional drafts", page)
+            self.assertIn("Applied glossary replacements", page)
             status = json.loads(urlopen(base + "/api/status", timeout=3).read())
             self.assertIn("state", status)
         finally:
@@ -47,7 +48,9 @@ class BrowserPreviewTests(unittest.TestCase):
                 (job_dir / "clip_001.mp4").write_bytes(b"completed")
                 (job_dir / "clip_001.srt").write_text("1\n00:00:00,000 --> 00:00:01,000\nHello\n", encoding="utf-8")
                 (job_dir / "analysis.json").write_text(json.dumps({
-                    "clips": [{"filename": "clip_001.mp4", "validation": "VALIDATED"}],
+                    "clips": [{"filename": "clip_001.mp4", "validation": "VALIDATED",
+                               "render": {"glossary_replacements": [{"original_text": "Kaya-la",
+                                   "replacement": "Kayaba", "cue_number": 1}]}}],
                     "analysis_cache_status": "reused", "transcription_cache_status": "reused",
                 }), encoding="utf-8")
                 raise InterruptedError("Processing cancelled")
@@ -65,6 +68,7 @@ class BrowserPreviewTests(unittest.TestCase):
                     browser_preview._run_job(source, 2, "Whisper transcription", "cancel-test")
                 self.assertIn("Interrupted · 1 draft(s)", browser_preview._STATE["status"])
                 self.assertEqual(1, browser_preview._STATE["report"]["selected_draft_count"])
+                self.assertEqual("Kayaba", browser_preview._STATE["report"]["drafts"][0]["glossary_replacements"][0]["replacement"])
             finally:
                 browser_preview._STATE.clear()
                 browser_preview._STATE.update(previous_state)

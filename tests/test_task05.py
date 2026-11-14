@@ -8,6 +8,7 @@ from unittest.mock import patch
 
 from captions import group_words
 from captions import caption_lines, choose_placement, cue_times, join_word_tokens, shot_placements
+from glossary import apply_replacements, load_glossary
 from editorial import (QUALITY_FLOOR, WEIGHTS, apply_assessment, local_endpoint, transcript_windows,
                        validate_assessment)
 from golden_set import SCHEMA, evaluate, interval_iou, validate_labels
@@ -100,6 +101,41 @@ class Task05Tests(unittest.TestCase):
     def test_token_join_preserves_whisper_spacing_and_punctuation(self):
         self.assertEqual("Akihiko Kaya-la created", join_word_tokens(
             [" Akihiko", " Kaya", "-la", " created "]))
+
+    def test_glossary_is_longest_first_whole_word_and_case_configurable(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "glossary.json"
+            path.write_text(json.dumps({"replacements": [
+                {"from": "Gear", "to": "Item"},
+                {"from": "Nerve Gear", "to": "NerveGear"},
+                {"from": "Kaya -la", "to": "Kayaba"},
+                {"from": "Kain", "to": "Klein"},
+                {"from": "hello", "to": "HI", "case_sensitive": True},
+            ]}), encoding="utf-8")
+            glossary = load_glossary(path)
+        text, applied = apply_replacements("The Nerve Gear, Kaya-la; KAIN, Kainer. Hello hello!", glossary, 3)
+        self.assertEqual("The NerveGear, Kayaba; Klein, Kainer. Hello HI!", text)
+        self.assertEqual(["Nerve Gear", "Kaya-la", "hello", "KAIN"], [item["original_text"] for item in applied])
+        self.assertTrue(all(item["cue_number"] == 3 for item in applied))
+
+    def test_missing_glossary_is_created_empty_by_default(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "preferences" / "glossary.json"
+            self.assertEqual([], load_glossary(path))
+            self.assertEqual({"replacements": []}, json.loads(path.read_text(encoding="utf-8")))
+
+    def test_glossary_changes_do_not_invalidate_transcription_cache(self):
+        from clipper import _transcription_fingerprint
+        with tempfile.TemporaryDirectory() as tmp:
+            source = Path(tmp) / "episode.mkv"
+            glossary = Path(tmp) / "glossary.json"
+            source.write_bytes(b"unchanged source")
+            settings = {"model": "small", "language": None, "task": "transcribe",
+                        "audio_stream_index": 2, "beam_size": 5}
+            initial = _transcription_fingerprint(source, settings)
+            glossary.write_text('{"replacements": [{"from":"Kain","to":"Klein"}]}', encoding="utf-8")
+            changed = _transcription_fingerprint(source, settings)
+            self.assertEqual(initial, changed)
 
     def test_short_trailing_fragment_is_merged_without_changing_cached_words(self):
         sample = [SimpleNamespace(start=i * .1, end=i * .1 + .08, text=f" w{i}") for i in range(5)]

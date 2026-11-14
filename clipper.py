@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import Callable
 from diagnostics import ffmpeg_path, ffprobe_path, verify_encoder
 from captions import PRESETS, anchor_override, ass_style, caption_line_break, caption_lines, cue_times, group_words, join_word_tokens, shot_placements
+from glossary import apply_replacements, load_glossary
 from clipper_runtime.cuda_dlls import register_cuda_dll_directories
 from reframing import PLAN_VERSION, build_reframe_plan, crop_x_expression, write_reframe_debug
 from storyboard import STORYBOARD_VERSION, write_candidate_storyboard
@@ -919,7 +920,8 @@ def rank_clips(duration: float, motion: list[float], audio: list[float], cuts: l
 
 
 def _ass_text(words: list[Word], start: float, end: float, style: str | None = None,
-              placement: str | None = None, placements: list[dict] | None = None) -> str:
+              placement: str | None = None, placements: list[dict] | None = None,
+              glossary: list[dict] | None = None) -> str:
     style = style or os.getenv("CLIPPER_CAPTION_STYLE", "bold_pop")
     placement = placement or os.getenv("CLIPPER_CAPTION_PLACEMENT", "auto")
     if style not in PRESETS:
@@ -942,6 +944,7 @@ def _ass_text(words: list[Word], start: float, end: float, style: str | None = N
         override = anchor_override(anchor) if anchor else ""
         split = caption_line_break(line)
         text = ass_line(line) if split is None else ass_line(line[:split]) + "\\N" + ass_line(line[split:])
+        text, _ = apply_replacements(text, glossary or [], len(events) + 1)
         events.append(f"Dialogue: 0,{_ass_time(cue_start)},{_ass_time(cue_end)},Default,,0,0,0,,{override}{text.strip()}")
     return "\n".join(["[Script Info]", "ScriptType: v4.00+", "WrapStyle: 2", "ScaledBorderAndShadow: yes", "PlayResX: 1080", "PlayResY: 1920", "[V4+ Styles]", "Format: Name,Fontname,Fontsize,PrimaryColour,SecondaryColour,OutlineColour,BackColour,Bold,Italic,Underline,StrikeOut,ScaleX,ScaleY,Spacing,Angle,BorderStyle,Outline,Shadow,Alignment,MarginL,MarginR,MarginV,Encoding", ass_style(style, placement), "[Events]", "Format: Layer,Start,End,Style,Name,MarginL,MarginR,MarginV,Effect,Text", *events])
 
@@ -958,7 +961,8 @@ def _ass_time(seconds: float) -> str:
     return f"{hours}:{minutes:02}:{secs:02}.{centiseconds:02}"
 
 
-def _srt(words: list[Word], start: float, end: float, style: str | None = None) -> str:
+def _srt(words: list[Word], start: float, end: float, style: str | None = None,
+         glossary: list[dict] | None = None, applied: list[dict] | None = None) -> str:
     style = style or os.getenv("CLIPPER_CAPTION_STYLE", "bold_pop")
     if style not in PRESETS:
         style = "bold_pop"
@@ -969,6 +973,9 @@ def _srt(words: list[Word], start: float, end: float, style: str | None = None) 
     entries = []
     for i, (chunk, (cue_start, cue_end)) in enumerate(zip(chunks, cue_times(chunks, start, end)), 1):
         caption = "\n".join(caption_lines(chunk))
+        caption, replacements = apply_replacements(caption, glossary or [], i)
+        if applied is not None:
+            applied.extend(replacements)
         entries.append(f"{i}\n{stamp(cue_start)} --> {stamp(cue_end)}\n{caption}")
     return "\n\n".join(entries)
 
@@ -1152,10 +1159,13 @@ def render(path: Path, output: Path, info: VideoInfo, clip: dict, words: list[Wo
     ass_path = temp_video.with_suffix(".ass")
     duration = clip["end"] - clip["start"]
     selected_encoder, encoder_note = select_encoder(encoder)
-    temp_srt.write_text(_srt(words, clip["start"], clip["end"]), encoding="utf-8")
+    glossary = load_glossary()
+    applied_replacements = []
+    temp_srt.write_text(_srt(words, clip["start"], clip["end"], glossary=glossary,
+                             applied=applied_replacements), encoding="utf-8")
     placement = os.getenv("CLIPPER_CAPTION_PLACEMENT", "auto")
     ass_path.write_text(_ass_text(words, clip["start"], clip["end"], placement=placement,
-                                  placements=caption_shots), encoding="utf-8-sig")
+                                  placements=caption_shots, glossary=glossary), encoding="utf-8-sig")
     try:
         filt = _render_filter(info, clip, ass_path, reframe_plan)
         cmd = ["ffmpeg", "-y", "-ss", f"{clip['start']:.3f}", "-i", str(path), "-t", f"{duration:.3f}", "-filter_complex", filt, "-map", "[v]", "-map_metadata", "-1", "-map_chapters", "-1"]
@@ -1184,6 +1194,7 @@ def render(path: Path, output: Path, info: VideoInfo, clip: dict, words: list[Wo
         os.replace(temp_srt, srt_path)
         os.replace(temp_video, output)
         return {**checked, "encoder": selected_encoder, "encoder_note": encoder_note,
+                "glossary_replacements": applied_replacements,
                 "composition_modes": [shot.get("composition", "full_frame_contain") for shot in (reframe_plan or {}).get("shots", [])],
                 "reframe_plan": reframe_plan,
                 "encode_seconds": round(encode_seconds, 3), "validation_seconds": round(validation_seconds, 3)}

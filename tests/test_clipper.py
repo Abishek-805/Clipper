@@ -89,6 +89,16 @@ class ClipperTests(unittest.TestCase):
         srt_cues = ["\n".join(cue.splitlines()[2:]) for cue in _srt(words, 0, 3).split("\n\n")]
         self.assertEqual(srt_cues, ass_cues)
 
+    def test_glossary_replacement_matches_rendered_ass_and_srt_captions(self):
+        glossary = [{"from": "Kaya -la", "to": "Kayaba", "whole_word": True, "case_sensitive": False}]
+        words = [Word(.1, .3, " Kaya"), Word(.3, .5, "-la")]
+        srt = _srt(words, 0, 1, glossary=glossary)
+        ass = _ass_text(words, 0, 1, glossary=glossary)
+        visible_ass = re.sub(r"\{\\kf\d+\}", "", ass)
+        self.assertIn("Kayaba", srt)
+        self.assertIn("Kayaba", visible_ass)
+        self.assertNotIn("Kaya-la", visible_ass)
+
     def test_embedded_srt_cues_keep_source_times_and_split_words(self):
         words = parse_embedded_srt("1\n00:01:00,000 --> 00:01:02,000\n<font>hello world</font>\n")
         self.assertEqual(["hello", " world"], [word.text for word in words])
