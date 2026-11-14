@@ -101,7 +101,7 @@ class BrowserPreviewTests(unittest.TestCase):
                     report={"drafts": [{"filename": "clip_001.mp4"}]})
                 base = f"http://127.0.0.1:{server.server_address[1]}"
                 body = json.dumps({"job_id": job_id, "clip_id": "clip_001.mp4", "start": 0,
-                    "end": 1, "captions": "1\n00:00:00,000 --> 00:00:01,000\nHello", "caption_position": "bottom-safe"}).encode()
+                    "end": 1, "captions": None, "caption_position": "bottom-safe"}).encode()
                 with patch.object(browser_preview, "OUTPUT", output), patch.object(browser_preview, "_run_rerender", side_effect=blocked_worker):
                     request = lambda: urlopen(Request(base + "/api/rerender", data=body,
                         headers={"Content-Type": "application/json"}, method="POST"), timeout=3)

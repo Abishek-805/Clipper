@@ -50,8 +50,9 @@ label{display:block;color:var(--muted);font-size:13px;margin:12px 0 5px}input,se
 const $=id=>document.getElementById(id), qs=new URLSearchParams(location.search);if(qs.has('source'))$('source').value=qs.get('source');
 async function inspect(){let source=$('source').value.trim();if(!source)return; $('inspect').disabled=true;try{let r=await fetch('/api/probe?source='+encodeURIComponent(source)),d=await r.json();if(!r.ok)throw Error(d.error||'Probe failed');$('audio').innerHTML='';for(const t of d.audio){let o=document.createElement('option');o.value=t.index;o.textContent=`${t.language||'und'} · stream #${t.index} · ${t.title||t.codec}${t.default?' · default':''}`;$('audio').append(o);if((t.language||'').toLowerCase().startsWith('en'))o.selected=true}if(!d.audio.length){let o=document.createElement('option');o.value='';o.textContent='No audio';$('audio').append(o)}$('meta').textContent=`${d.name} · ${d.duration.toFixed(1)} s · ${d.width}×${d.height} · ${d.video_codec||'video'}`;$('start').disabled=false}catch(e){$('meta').textContent=e.message;$('start').disabled=true}finally{$('inspect').disabled=false}}
 $('inspect').onclick=inspect;$('start').onclick=async()=>{try{let r=await fetch('/api/start',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({source:$('source').value.trim(),audio_index:$('audio').value===''?null:Number($('audio').value),caption_mode:$('captions').value})}),d=await r.json();if(!r.ok)throw Error(d.error||'Could not start');$('result').textContent=`Job ${d.job_id} started.`}catch(e){$('status').textContent=e.message}};$('cancel').onclick=()=>fetch('/api/cancel',{method:'POST'});
+fetch('/api/jobs').then(r=>r.json()).then(jobs=>{$('jobs').innerHTML=jobs.map(j=>'<option value="'+j.id+'">'+esc(j.source)+' · '+j.id+'</option>').join('')});$('open-job').onclick=async()=>{await fetch('/api/open-job',{method:'POST',body:JSON.stringify({job_id:$('jobs').value})});document.querySelectorAll('[data-unsaved]').forEach(x=>x.dataset.unsaved='false');renderedKey=''};
 const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-let renderedKey='';
+let renderedKey=''; const editKey=(job,clip)=>'clipper-edit:'+job+':'+clip;
 function clock(v){v=Math.max(0,Number(v)||0);let ms=Math.floor(v*1000),h=Math.floor(ms/3600000);ms%=3600000;let m=Math.floor(ms/60000);ms%=60000;let s=Math.floor(ms/1000);return `${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}.${String(ms%1000).padStart(3,'0')}`}
 function nudgeButtons(i,field){return [-1,-.5,.5,1].map(n=>'<button class="secondary" data-nudge="'+n+'" data-field="'+field+'-'+i+'">'+(n>0?'+':'')+n+'s</button>').join('')}
 function appliedList(x){return esc((x.glossary_replacements||[]).map(r=>r.original_text+' → '+r.replacement+' (cue '+r.cue_number+')').join('; ')||'none')}
@@ -60,12 +61,13 @@ function drawDrafts(job,drafts){$('artifacts').innerHTML=drafts.map(function(x,i
  const start=Number(x.start)||0,end=Number(x.end)||0;
  return '<div class="draft"><p class="filename"><strong>'+esc(x.filename)+'</strong> · '+esc(x.technical_validation)+'</p><p>Provisional draft — rights not verified.</p><video id="clip-'+i+'" controls preload="metadata" src="'+video+'?v='+(x.edit_version||0)+'"></video><p><a href="'+srt+'">Open SRT</a> <a href="/files/'+encodeURIComponent(job)+'/analysis.json">analysis.json</a></p><div class="row"><div><label>Start · <span class="editor-times" id="start-time-'+i+'">'+clock(start)+'</span></label><input id="start-'+i+'" type="number" step="0.001" value="'+start+'"><div class="nudge">'+nudgeButtons(i,'start')+'</div></div><div><label>End · <span class="editor-times" id="end-time-'+i+'">'+clock(end)+'</span></label><input id="end-'+i+'" type="number" step="0.001" value="'+end+'"><div class="nudge">'+nudgeButtons(i,'end')+'</div></div></div><label for="captions-'+i+'">Caption cues · edit text and SRT times</label><textarea id="captions-'+i+'" spellcheck="false" placeholder="Loading SRT…"></textarea><label for="position-'+i+'">Caption position</label><select id="position-'+i+'"><option value="bottom-safe">Bottom safe</option><option value="center-lower">Center lower</option></select><button class="save-edit" data-index="'+i+'" data-clip="'+esc(x.filename)+'">Save &amp; Re-render Clip</button><span id="'+status+'" class="badge"></span><p>Applied glossary replacements: '+appliedList(x)+'</p></div>';
  }).join('')||'<p>No validated drafts in this job.</p>'
- drafts.forEach(async(x,i)=>{let area=$(`captions-${i}`);try{area.value=await(await fetch(`/files/${encodeURIComponent(job)}/${encodeURIComponent(x.srt)}`)).text()}catch{area.value='Could not load SRT.'}area.dataset.dirty='false';area.oninput=()=>area.dataset.dirty='true'});
- $('artifacts').querySelectorAll('[data-nudge]').forEach(b=>b.onclick=()=>{let input=$(b.dataset.field);input.value=(Number(input.value)+Number(b.dataset.nudge)).toFixed(3);let id=input.id.startsWith('start-')?'start-time-':'end-time-';$(id+input.id.split('-').pop()).textContent=clock(input.value)});
- $('artifacts').querySelectorAll('input[type=number]').forEach(input=>input.oninput=()=>{let id=input.id.startsWith('start-')?'start-time-':'end-time-';$(id+input.id.split('-').pop()).textContent=clock(input.value)});
+ drafts.forEach(async(x,i)=>{let area=$(`captions-${i}`);try{area.value=await(await fetch(`/files/${encodeURIComponent(job)}/${encodeURIComponent(x.srt)}`)).text()}catch{area.value='Could not load SRT.'}area.dataset.dirty='false';let saved=JSON.parse(localStorage.getItem(editKey(job,x.filename))||'null');if(saved){area.value=saved.captions??area.value;area.dataset.dirty=saved.dirty;area.dataset.unsaved='true';$(`start-${i}`).value=saved.start;$(`end-${i}`).value=saved.end;$(`position-${i}`).value=saved.position}area.oninput=()=>{area.dataset.dirty='true';area.dataset.unsaved='true'}});
+ $('artifacts').querySelectorAll('[data-nudge]').forEach(b=>b.onclick=()=>{let input=$(b.dataset.field);input.value=(Number(input.value)+Number(b.dataset.nudge)).toFixed(3);input.dataset.unsaved='true';let id=input.id.startsWith('start-')?'start-time-':'end-time-';$(id+input.id.split('-').pop()).textContent=clock(input.value)});
+ $('artifacts').querySelectorAll('input[type=number]').forEach(input=>input.oninput=()=>{input.dataset.unsaved='true';let id=input.id.startsWith('start-')?'start-time-':'end-time-';$(id+input.id.split('-').pop()).textContent=clock(input.value)});
+ $('artifacts').oninput=()=>drafts.forEach((x,i)=>{let area=$(`captions-${i}`);localStorage.setItem(editKey(job,x.filename),JSON.stringify({start:$(`start-${i}`).value,end:$(`end-${i}`).value,captions:area.value,dirty:area.dataset.dirty,position:$(`position-${i}`).value}))});
  $('artifacts').querySelectorAll('.save-edit').forEach(button=>button.onclick=async()=>{let i=button.dataset.index,captionStatus=$(`edit-status-${i}`);button.disabled=true;captionStatus.textContent='Saving and rendering…';try{let area=$(`captions-${i}`),response=await fetch('/api/rerender',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({job_id:job,clip_id:button.dataset.clip,start:Number($(`start-${i}`).value),end:Number($(`end-${i}`).value),captions:area.dataset.dirty==='true'?area.value:null,caption_position:$(`position-${i}`).value})});let data=await response.json();if(!response.ok)throw Error(data.error||'Rerender failed');captionStatus.textContent='Queued…'}catch(error){captionStatus.textContent=error.message;button.disabled=false}});
 }
-async function poll(){try{let d=await(await fetch('/api/status')).json();if(!$('source').value&&d.report?.source_path){$('source').value=d.report.source_path;inspect()}$('status').textContent=d.status;$('logs').textContent=(d.logs||[]).slice(-30).join('\n');let m=d.model_status;$('model').textContent=m?`Whisper ${m.model}: ${m.device}/${m.compute_type}${m.fallback_reason?' · '+m.fallback_reason:''}`:'';$('cancel').disabled=d.state!=='running'&&!d.rendering;$('start').disabled=d.state==='running'||d.rendering||!$('meta').textContent;$('result').textContent=d.job_folder?`${d.rendering?'RENDERING EDIT':d.state.toUpperCase()} · ${d.job_folder}`:'No job run yet.';if(d.report){let e=d.report.drafts||[],key=d.job_id+JSON.stringify(e);if(key!==renderedKey){drawDrafts(d.job_id,e);renderedKey=key}document.querySelectorAll('.save-edit').forEach(button=>button.disabled=!!d.rendering);if(d.rerender_result){let i=e.findIndex(x=>x.filename===d.rerender_result.clip_id),target=document.getElementById(`edit-status-${i}`);if(target)target.textContent=d.rerender_result.error||`Rendered ${d.rerender_result.versioned_mp4||''}`}}}catch{}setTimeout(poll,1800)}poll();
+async function poll(){try{let d=await(await fetch('/api/status')).json();if(!$('source').value&&d.report?.source_path){$('source').value=d.report.source_path;inspect()}$('status').textContent=d.status;$('logs').textContent=(d.logs||[]).slice(-30).join('\n');let m=d.model_status;$('model').textContent=m?`Whisper ${m.model}: ${m.device}/${m.compute_type}${m.fallback_reason?' · '+m.fallback_reason:''}`:'';$('cancel').disabled=d.state!=='running'&&!d.rendering;$('start').disabled=d.state==='running'||d.rendering||!$('meta').textContent;$('result').textContent=d.job_folder?`${d.rendering?'RENDERING EDIT':d.state.toUpperCase()} · ${d.job_folder}`:'No job run yet.';if(d.report){let e=d.report.drafts||[],key=d.job_id+JSON.stringify(e);if(key!==renderedKey&&!document.querySelector('[data-unsaved="true"]')){drawDrafts(d.job_id,e);renderedKey=key}document.querySelectorAll('.save-edit').forEach(button=>button.disabled=!!d.rendering);if(d.rerender_result){let i=e.findIndex(x=>x.filename===d.rerender_result.clip_id),target=document.getElementById(`edit-status-${i}`);if(target)target.textContent=d.rerender_result.error||`Rendered ${d.rerender_result.versioned_mp4||''}`}}}catch{}setTimeout(poll,1800)}poll();
 </script>"""
 
 
@@ -87,6 +89,26 @@ def _probe_source(raw: str):
         raise ValueError("Choose a supported local video file.")
     info = probe(source)
     return source, info
+
+
+def _job_path(job_id: str) -> Path:
+    if not isinstance(job_id, str) or not re.fullmatch(r"[A-Za-z0-9_-]{1,80}", job_id):
+        raise ValueError("Invalid job identifier")
+    path = (OUTPUT / "jobs" / job_id).resolve()
+    if path.parent != (OUTPUT / "jobs").resolve():
+        raise ValueError("Invalid job path")
+    return path
+
+
+def _open_job(job_id: str):
+    folder = _job_path(job_id)
+    report = json.loads((folder / "analysis.json").read_text(encoding="utf-8"))
+    report["drafts"] = [{"filename": c["filename"], "srt": Path(c["filename"]).with_suffix(".srt").name,
+        "start": c.get("start"), "end": c.get("end"), "edit_version": len(c.get("edit_history", [])),
+        "technical_validation": c.get("validation", "PROVISIONAL")}
+        for c in report.get("clips", []) if c.get("filename") and (folder / c["filename"]).is_file()]
+    _publish(state="completed", report=report, job_id=job_id, job_folder=str(folder),
+             rendering=False, rerender_result=None, status="Opened saved job")
 
 
 def _run_job(source: Path, audio_index: int | None, caption_mode: str, job_id: str):
@@ -240,6 +262,16 @@ class Handler(BaseHTTPRequestHandler):
                         draft.setdefault("edit_version", len(clip.get("edit_history", [])))
                 snapshot["report"] = {key: report.get(key) for key in _STATUS_REPORT_FIELDS}
             return self._json(snapshot)
+        if parsed.path == "/api/jobs":
+            jobs = []
+            for path in sorted((OUTPUT / "jobs").glob("*/analysis.json"), reverse=True):
+                try:
+                    value = json.loads(path.read_text(encoding="utf-8"))
+                    if isinstance(value.get("clips"), list):
+                        jobs.append({"id": path.parent.name, "source": value.get("source", path.parent.name)})
+                except (OSError, ValueError):
+                    continue
+            return self._json(jobs)
         if parsed.path == "/api/probe":
             try:
                 source, info = _probe_source(parse_qs(parsed.query).get("source", [""])[0])
@@ -285,6 +317,16 @@ class Handler(BaseHTTPRequestHandler):
         origin = self.headers.get("Origin")
         if origin and origin != f"http://{self.headers.get('Host', '')}":
             return self._json({"error": "Requests must originate from the local browser console."}, 403)
+        if self.path == "/api/open-job":
+            try:
+                body = json.loads(self.rfile.read(int(self.headers.get("Content-Length", "0"))))
+                with _LOCK:
+                    if _STATE.get("state") == "running" or _STATE.get("rendering"):
+                        return self._json({"error": "An operation is already running"}, 409)
+                    _open_job(body.get("job_id"))
+                return self._json({"ok": True})
+            except (OSError, ValueError, TypeError) as exc:
+                return self._json({"error": str(exc)}, 400)
         if self.path == "/api/cancel":
             with _LOCK: cancel = _CANCEL
             if cancel: cancel.set(); return self._json({"ok": True})
@@ -304,7 +346,7 @@ class Handler(BaseHTTPRequestHandler):
                     raise ValueError("Choose a clip from the current local job")
                 if not isinstance(clip_id, str) or Path(clip_id).name != clip_id or not clip_id.endswith(".mp4"):
                     raise ValueError("Invalid clip filename")
-                if not isinstance(captions, str) or len(captions) > 1_000_000:
+                if captions is not None and (not isinstance(captions, str) or len(captions) > 1_000_000):
                     raise ValueError("Caption text is invalid or too large")
                 if position not in {"bottom-safe", "center-lower"}:
                     raise ValueError("Choose a supported caption position")
@@ -317,6 +359,9 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json({"error": str(exc)}, 400)
             cancel = threading.Event()
             with _LOCK:
+                if _STATE.get("state") == "running" or _STATE.get("rendering"):
+                    return self._json({"error": "An operation is already running"}, 409)
+                _write_json(job_dir / "pending-edits.json", body)
                 _CANCEL = cancel
                 _STATE.update(rendering=True, rerender_result=None, status=f"Re-rendering {clip_id}")
             thread = threading.Thread(target=_run_rerender,
@@ -340,7 +385,19 @@ class Handler(BaseHTTPRequestHandler):
             job_id = time.strftime("%Y%m%d-%H%M%S") + "-" + uuid.uuid4().hex[:8]
         except Exception as exc: return self._json({"error": str(exc)}, 400)
         thread = threading.Thread(target=_run_job, args=(source, audio_index, caption_mode, job_id), daemon=True)
-        thread.start(); return self._json({"job_id": job_id, "state": "running"}, 202)
+        with _LOCK:
+            if _STATE.get("state") == "running" or _STATE.get("rendering"):
+                return self._json({"error": "An operation is already running"}, 409)
+            _STATE.update(state="running", status="Starting job")
+            _CANCEL = threading.Event()
+        try:
+            thread.start()
+        except RuntimeError as exc:
+            with _LOCK:
+                _CANCEL = None
+                _STATE.update(state="failed", status=str(exc))
+            return self._json({"error": str(exc)}, 500)
+        return self._json({"job_id": job_id, "state": "running"}, 202)
 
 
 class LocalServer(ThreadingHTTPServer):
