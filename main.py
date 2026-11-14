@@ -20,6 +20,7 @@ from model_manager import ModelManager, gpu_memory_usage
 from vision import VisionModelManager, vision_installation_status
 from nightly_queue import QueueStore, normalized_source_path
 from queue_runner import NightlySessionRunner
+from clipper_runtime.cuda_dlls import register_cuda_dll_directories
 
 APP_DIR = Path(__file__).resolve().parent
 OUTPUT = APP_DIR / "Shorts_Output"
@@ -45,6 +46,7 @@ def _write_json(path: Path, data):
 
 def _whisper_model_cached(model_size: str) -> bool:
     try:
+        register_cuda_dll_directories()
         from faster_whisper.utils import download_model
         return Path(download_model(model_size, local_files_only=True)).is_dir()
     except Exception:

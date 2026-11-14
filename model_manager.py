@@ -8,6 +8,7 @@ import threading
 import time
 from pathlib import Path
 from typing import Callable
+from clipper_runtime.cuda_dlls import register_cuda_dll_directories
 
 
 def gpu_memory_usage() -> dict | None:
@@ -87,6 +88,7 @@ class ModelManager:
         info = {"cuda_available": False, "cuda_devices": 0, "cuda_compute_types": [], "cpu_compute_types": [],
                 "gpu": self.get_memory_usage(), "ctranslate2_version": None}
         try:
+            register_cuda_dll_directories()
             import ctranslate2
             info["ctranslate2_version"] = getattr(ctranslate2, "__version__", "unknown")
             info["cuda_devices"] = int(ctranslate2.get_cuda_device_count())
@@ -105,6 +107,7 @@ class ModelManager:
     @staticmethod
     def model_identity(model_size: str) -> str:
         try:
+            register_cuda_dll_directories()
             import faster_whisper
             version = getattr(faster_whisper, "__version__", "unknown")
         except ImportError:
@@ -112,6 +115,7 @@ class ModelManager:
         return f"Systran/faster-whisper-{model_size}@faster-whisper-{version}"
 
     def _whisper_model_class(self):
+        register_cuda_dll_directories()
         from faster_whisper import WhisperModel
         return WhisperModel
 

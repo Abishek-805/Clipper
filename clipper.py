@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import Callable
 from diagnostics import ffmpeg_path, ffprobe_path, verify_encoder
 from captions import PRESETS, anchor_override, ass_style, group_words, join_word_tokens, shot_placements
+from clipper_runtime.cuda_dlls import register_cuda_dll_directories
 from reframing import PLAN_VERSION, build_reframe_plan, crop_x_expression, write_reframe_debug
 from storyboard import STORYBOARD_VERSION, write_candidate_storyboard
 from editorial import (QUALITY_FLOOR, apply_assessment, assess_candidate, local_endpoint,
@@ -354,6 +355,7 @@ def transcribe(path: Path, has_audio: bool, model_size: str, cache: Path, cancel
         return TranscriptionResult(None, [], "cancelled", "none", "none", "Processing cancelled",
                                    "CANCELLED", model=model_size)
     try:
+        register_cuda_dll_directories()
         import faster_whisper  # noqa: F401
     except ImportError as exc:
         return TranscriptionResult(None, [], "unavailable", "none", "none", str(exc),

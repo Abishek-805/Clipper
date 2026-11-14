@@ -7,6 +7,7 @@ import shutil
 import subprocess
 import sys
 from pathlib import Path
+from clipper_runtime.cuda_dlls import register_cuda_dll_directories
 
 APP_DIR = Path(__file__).resolve().parent
 
@@ -120,6 +121,7 @@ def collect_diagnostics(probe_encoders: bool = True) -> dict:
     else:
         add("NVIDIA hardware/driver", "optional", "nvidia-smi not found")
     try:
+        register_cuda_dll_directories()
         import ctranslate2
         devices = ctranslate2.get_cuda_device_count()
         types = sorted(ctranslate2.get_supported_compute_types("cuda")) if devices else []

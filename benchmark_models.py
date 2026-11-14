@@ -7,6 +7,9 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 
+from clipper_runtime.cuda_dlls import register_cuda_dll_directories
+
+register_cuda_dll_directories()
 from faster_whisper.utils import download_model
 
 from model_manager import ModelManager
