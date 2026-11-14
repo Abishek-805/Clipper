@@ -6,7 +6,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 import clipper
-from daily_workflow import byte_range, interval, manual_clip, restore_version
+from daily_workflow import byte_range, interval, manual_clip, restore_version, export_delivery
 from tests import test_rerender as fixtures
 
 class DailyWorkflowTests(unittest.TestCase):
@@ -30,6 +30,11 @@ class DailyWorkflowTests(unittest.TestCase):
             with patch.object(clipper,'select_clips',side_effect=AssertionError('Selector must not run')):
                 result=manual_clip(source,folder,root/'cache',1,0,1.5,'None',False,threading.Event(),overlays={'hook':'My hook','context':'Context','margin':120})
             self.assertEqual('MANUAL',result['clips'][0]['selection'])
+            delivery=export_delivery(folder,'clip_001.mp4',root/'output')
+            self.assertTrue((Path(delivery['folder'])/delivery['filename']).is_file())
+            self.assertTrue((Path(delivery['folder'])/Path(delivery['filename']).with_suffix('.srt')).is_file())
+            again=export_delivery(folder,'clip_001.mp4',root/'output')
+            self.assertNotEqual(delivery['filename'],again['filename'])
             original=(folder/'clip_001.mp4').read_bytes()
             clipper.rerender_single_clip(folder,'clip_001.mp4',0,1.8,'1\n00:00:00,000 --> 00:00:01,000\nEdited','bottom-safe',render_preset='fast')
             restored=restore_version(folder,'clip_001.mp4',1)

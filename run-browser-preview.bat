@@ -6,4 +6,4 @@ if not exist ".venv\Scripts\python.exe" (
   pause
   exit /b 1
 )
-".venv\Scripts\python.exe" browser_preview.py
+".venv\Scripts\python.exe" browser_preview.py --port 8770 --open-browser

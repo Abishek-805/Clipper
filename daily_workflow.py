@@ -4,6 +4,7 @@ from __future__ import annotations
 import hashlib
 import json
 import math
+import re
 import shutil
 import threading
 from pathlib import Path
@@ -110,3 +111,32 @@ def byte_range(header: str | None, size: int):
     if start < 0 or start > end or start >= size:
         raise ValueError("Unsatisfiable range")
     return start, end, 206
+
+
+def export_delivery(folder: Path, filename: str, output_root: Path):
+    manifest = json.loads((folder / "analysis.json").read_text(encoding="utf-8"))
+    clip = next((x for x in manifest.get("clips", []) if x.get("filename") == filename), None)
+    source = clipper._manifest_clip_path(folder, filename)
+    if not clip or source is None or not source.is_file():
+        raise ValueError("Choose an existing clip in the job")
+    info = clipper.probe(source)
+    clipper.validate_output(source, float(clip["end"])-float(clip["start"]), info.has_audio,
+                            source.with_suffix(".srt"), captions_required=False)
+    episode = re.sub(r'[^\w .-]', '_', Path(manifest.get("source", "episode")).stem)[:80].strip(' .') or "episode"
+    destination = output_root / "Exports" / episode / folder.name
+    destination.mkdir(parents=True, exist_ok=True)
+    target = destination / filename
+    revision = 1
+    while target.exists():
+        target = destination / f"{source.stem}_export_{revision:03}.mp4"
+        revision += 1
+    try:
+        for suffix in (".mp4", ".srt"):
+            shutil.copy2(source.with_suffix(suffix), target.with_suffix(suffix))
+        clipper._write_manifest(target.with_suffix(".json"), {"source": manifest.get("source"), "job_id": folder.name,
+            "clip": clip, "status": "Technically validated; rights not verified"})
+    except Exception:
+        for suffix in (".mp4", ".srt", ".json"):
+            target.with_suffix(suffix).unlink(missing_ok=True)
+        raise
+    return {"folder": str(destination.resolve()), "filename": target.name}

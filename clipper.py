@@ -1198,7 +1198,8 @@ def render(path: Path, output: Path, info: VideoInfo, clip: dict, words: list[Wo
            cancel: threading.Event, encoder: str = "auto", reframe_plan: dict | None = None,
            caption_shots: list[dict] | None = None, audio_index: int | None = None,
            captions_required: bool = True, caption_cues: list[dict] | None = None,
-           caption_position: str | None = None, render_preset: str = "standard", overlays: dict | None = None) -> dict:
+           caption_position: str | None = None, render_preset: str | None = None, overlays: dict | None = None) -> dict:
+    render_preset = render_preset or os.getenv("CLIPPER_RENDER_PRESET", "standard")
     output.parent.mkdir(parents=True, exist_ok=True)
     srt_path = output.with_suffix(".srt")
     temp_video = output.with_name(output.stem + ".partial" + output.suffix)
@@ -1400,7 +1401,12 @@ def rerender_single_clip(job_dir: Path, clip_id: str, start_s: float, end_s: flo
                         "glossary_replacements": result.get("glossary_replacements", [])})
         clip_record.update(start=start_s, end=end_s, duration=duration,
                            caption_position=caption_position, overlays=overlays or {}, render=result)
-        _write_manifest(manifest_path, manifest)
+        try:
+            _write_manifest(manifest_path, manifest)
+        except Exception:
+            shutil.copy2(backup_mp4, output)
+            shutil.copy2(backup_srt, old_srt)
+            raise
         return {**result, "rerender_seconds": round(time.perf_counter() - started, 3),
                 "version": version, "versioned_mp4": backup_mp4.name, "versioned_srt": backup_srt.name,
                 "warnings": warnings}

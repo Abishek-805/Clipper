@@ -17,7 +17,7 @@ from urllib.parse import parse_qs, unquote, urlparse
 from clipper import process_video, probe, rerender_single_clip
 from main import ANALYSIS_CACHE, APP_STATE, OUTPUT, PREFERENCES, _read_json, _whisper_model_cached, _write_json
 from model_manager import ModelManager
-from daily_workflow import manual_clip, restore_version, byte_range
+from daily_workflow import manual_clip, restore_version, byte_range, export_delivery
 from glossary import load_glossary, glossary_path
 
 _LOCK = threading.RLock()
@@ -83,12 +83,23 @@ def _open_job(job_id: str):
 
 def _run_job(source: Path, audio_index: int | None, caption_mode: str, job_id: str):
     global _CANCEL
+    try:
+        _execute_job(source, audio_index, caption_mode, job_id)
+    except Exception as exc:
+        _publish(state="failed", rendering=False, status=f"Could not run job: {exc}")
+    finally:
+        with _LOCK: _CANCEL = None
+
+
+def _execute_job(source: Path, audio_index: int | None, caption_mode: str, job_id: str):
+    global _CANCEL
     job_dir = OUTPUT / "jobs" / job_id
     cache_key = hashlib.sha256(str(source.resolve()).casefold().encode("utf-8")).hexdigest()[:20]
     cache_dir = ANALYSIS_CACHE / cache_key
     stat = source.stat()
     source_fp = hashlib.sha256(f"{source.resolve()}|{stat.st_size}|{stat.st_mtime_ns}".encode()).hexdigest()
     settings = _read_json(PREFERENCES) or {}
+    os.environ["CLIPPER_RENDER_PRESET"] = "fast"
     model_size = "small"
     min_length = int(settings.get("minimum", 20))
     max_length = int(settings.get("maximum", 60))
@@ -173,12 +184,12 @@ def _run_job(source: Path, audio_index: int | None, caption_mode: str, job_id: s
 
 
 def _run_rerender(job_id: str, clip_id: str, start: float, end: float, captions: str, position: str,
-                  cancel: threading.Event, preset: str = "standard", overlays=None):
+                  cancel: threading.Event, preset: str = "standard", overlays=None, allow_long=False):
     global _CANCEL
     _publish(rendering=True, rerender_result=None, status=f"Re-rendering {clip_id}")
     try:
         result = rerender_single_clip(OUTPUT / "jobs" / job_id, clip_id, start, end,
-                                      captions, position, cancel=cancel, render_preset=preset, overlays=overlays)
+                                      captions, position, cancel=cancel, render_preset=preset, overlays=overlays, allow_long_duration=allow_long)
         with _LOCK: report = dict(_STATE.get("report") or {})
         for draft in report.get("drafts", []):
             if draft.get("filename") == clip_id:
@@ -286,7 +297,7 @@ class Handler(BaseHTTPRequestHandler):
         origin = self.headers.get("Origin")
         if origin and origin != f"http://{self.headers.get('Host', '')}":
             return self._json({"error": "Requests must originate from the local browser console."}, 403)
-        if self.path in {"/api/pick-file", "/api/manual", "/api/restore", "/api/glossary"}:
+        if self.path in {"/api/pick-file", "/api/manual", "/api/restore", "/api/glossary", "/api/export"}:
             try:
                 body = json.loads(self.rfile.read(int(self.headers.get("Content-Length", "0"))) or b"{}")
                 with _LOCK:
@@ -313,6 +324,8 @@ class Handler(BaseHTTPRequestHandler):
                             load_glossary(test)
                         _write_json(glossary_path(), {"replacements": value})
                         return self._json({"ok": True})
+                    if self.path == "/api/export":
+                        return self._json(export_delivery(_job_path(body.get("job_id")), body.get("clip_id"), OUTPUT))
                     if self.path == "/api/restore":
                         folder = _job_path(body.get("job_id"))
                         result = restore_version(folder, body.get("clip_id"), body.get("version"))
@@ -404,7 +417,7 @@ class Handler(BaseHTTPRequestHandler):
                 _CANCEL = cancel
                 _STATE.update(rendering=True, rerender_result=None, status=f"Re-rendering {clip_id}")
             thread = threading.Thread(target=_run_rerender,
-                args=(job_id, clip_id, start, end, captions, position, cancel, preset, overlays), daemon=True)
+                args=(job_id, clip_id, start, end, captions, position, cancel, preset, overlays, body.get("allow_long_duration") is True), daemon=True)
             try:
                 thread.start()
             except RuntimeError as exc:
@@ -457,5 +470,9 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=8765)
+    parser.add_argument("--open-browser", action="store_true")
     args = parser.parse_args()
+    if args.open_browser:
+        import webbrowser
+        threading.Timer(1, lambda: webbrowser.open(f"http://127.0.0.1:{args.port}/")).start()
     serve(args.host, args.port)

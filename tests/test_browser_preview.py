@@ -81,6 +81,40 @@ class BrowserPreviewTests(unittest.TestCase):
                 browser_preview._STATE.clear()
                 browser_preview._STATE.update(previous_state)
 
+    def test_rapid_analysis_start_reserves_one_worker(self):
+        from concurrent.futures import ThreadPoolExecutor
+        previous = dict(browser_preview._STATE)
+        release = threading.Event()
+        entered = []
+        server = LocalServer(("127.0.0.1", 0), Handler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        def worker(*args):
+            entered.append(args)
+            release.wait(3)
+        try:
+            browser_preview._STATE.update(state="idle", rendering=False)
+            base = f"http://127.0.0.1:{server.server_address[1]}"
+            body = json.dumps({"source":"episode.mkv", "audio_index":2, "caption_mode":"Whisper transcription"}).encode()
+            def request():
+                try:
+                    with urlopen(Request(base+"/api/start",data=body,headers={"Content-Type":"application/json"}),timeout=3) as response:
+                        return response.status
+                except HTTPError as exc:
+                    code = exc.code
+                    exc.close()
+                    return code
+            info = SimpleNamespace(streams=[{"type":"audio","index":2}])
+            with patch.object(browser_preview,"_probe_source",return_value=(Path("episode.mkv"),info)), patch.object(browser_preview,"_whisper_model_cached",return_value=True), patch.object(browser_preview,"_run_job",side_effect=worker):
+                with ThreadPoolExecutor(max_workers=2) as pool:
+                    codes = list(pool.map(lambda _: request(), range(2)))
+                self.assertEqual([202,409],sorted(codes))
+                self.assertEqual(1,len(entered))
+        finally:
+            release.set()
+            server.shutdown();server.server_close();thread.join(3)
+            browser_preview._STATE.clear();browser_preview._STATE.update(previous)
+
     def test_second_editor_save_is_rejected_while_rendering(self):
         with tempfile.TemporaryDirectory() as tmp:
             output = Path(tmp) / "Shorts_Output"
