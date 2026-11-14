@@ -13,3 +13,6 @@ logs/
 
 output/playwright/
 .playwright-cli/
+
+# Local reversible cleanup; never commit quarantined files.
+_Trash/

@@ -64,3 +64,9 @@ Historical research and the blind human-benchmark workspace remain separate unde
 `tests/ui-review.cjs` uses Playwright 1.57 and installed Microsoft Edge in headless mode. Start the server on port 8771 with a saved captioned job available. Set `CLIPPER_PLAYWRIGHT_MODULE` to your Playwright module directory, then run `node tests/ui-review.cjs`. An ordinary `playwright` installation also works without that variable. Override the server with `CLIPPER_UI_URL` and browser executable with `CLIPPER_BROWSER`.
 
 Checks cover the saved-job layout, desktop/mobile overflow, caption editing, polling/reload recovery, file inspection, and idle startup. The test creates no processing jobs and edits only disposable browser storage. It exercises the real browser chooser against the saved source; set `CLIPPER_NEW_SOURCE` to an optional additional test video to verify a new local import. These selected files are transferred only to the local server. Screenshots/results are written under ignored `output/playwright/`.
+
+### Local trash and generated files
+
+Disposable test caches, inactive browser profiles, benchmark copies, and verified duplicate runtime downloads can be quarantined under `_Trash/<timestamp>/`. This folder is local and Git-ignored. Each cleanup includes `manifest.json` with original paths, reasons, byte counts, and SHA-256 integrity checks; use it to restore individual entries without overwriting regenerated files. Historical test evidence may now be at its listed trash path.
+
+Source media, imported episodes, completed production jobs/exports, models, the active `.runtime/llama.cpp/b12284/bin` runtime, and persistent analysis caches are retained. Moving files to trash does **not** free disk space; no permanent deletion is performed. Python/test caches and screenshots may regenerate when tools run again and remain ignored.
