@@ -28,6 +28,7 @@ from vision import (VisionModelManager, extract_candidate_frames, read_semantic_
                     semantic_cache_key, write_semantic_cache)
 from gpu_analysis import visual_signals as _gpu_visual_signals
 from structure import prepare_structure, zone_check
+from dialogue import choose_dialogue, release_cues, clipped_cues, build_units, save_units
 
 VIDEO_EXTENSIONS = {".mp4", ".mkv", ".mov", ".avi", ".webm", ".m4v"}
 ANALYSIS_ENGINE_VERSION = "nvdec-shared-visual-pass-v1"
@@ -1088,6 +1089,13 @@ def parse_embedded_srt(text: str) -> list[Word]:
     return words
 
 
+def release_subtitle_transcription(structure: dict, folder: Path) -> TranscriptionResult:
+    selected = release_cues(structure)
+    _write_manifest(folder / "release-caption-cues.json", {"source_hash": structure["source_hash"], **selected})
+    return TranscriptionResult("en", [Word(**c) for c in selected["cues"]], "transcribed",
+                               "release_subtitles", "cue timing", "Release subtitle cues; no word alignment", model="none")
+
+
 def _embedded_subtitles(path: Path, stream_index: int, cancel: threading.Event) -> list[Word]:
     raw = _run(["ffmpeg", "-v", "error", "-i", str(path), "-map", f"0:{stream_index}",
                 "-c:s", "srt", "-f", "srt", "-"], cancel, text=False).stdout
@@ -1387,6 +1395,11 @@ def rerender_single_clip(job_dir: Path, clip_id: str, start_s: float, end_s: flo
     caption_cues = _rerender_cues(caption_cues_or_text, start_s, end_s)
     if caption_cues is None and (manifest.get("settings") or {}).get("caption_mode") == "None":
         words = []
+    elif caption_cues is None and (manifest.get("caption_source") == "Release subtitles" or
+                                  (manifest.get("settings") or {}).get("caption_mode") == "Release subtitles"):
+        saved_cues = json.loads((job_dir / "release-caption-cues.json").read_text(encoding="utf-8"))
+        caption_cues = clipped_cues(saved_cues["cues"], start_s, end_s)
+        words = []
     elif caption_cues is None:
         cache_key = hashlib.sha256(str(source).casefold().encode("utf-8")).hexdigest()[:20]
         cache_root = Path(os.environ.get("LOCALAPPDATA", Path.home())) / "Clipper" / "analysis_cache" / cache_key
@@ -1614,7 +1627,7 @@ def process_video(path: Path, output_root: Path, model_size: str, clip_count: in
         transcription_cache_mtime = cache.stat().st_mtime_ns
     except OSError:
         transcription_cache_mtime = None
-    transcript = transcribe(path, info.has_audio, model_size, cache, cancel, progress, model_manager, info.duration,
+    transcript = release_subtitle_transcription(structure, folder) if caption_source == "Release subtitles" else transcribe(path, info.has_audio, model_size, cache, cancel, progress, model_manager, info.duration,
                             allow_inference=transcription_enabled and caption_source.lower().startswith("whisper"),
                             audio_index=audio_index, task=transcription_task)
     if caption_source.startswith("Embedded"):
@@ -1633,6 +1646,17 @@ def process_video(path: Path, output_root: Path, model_size: str, clip_count: in
     if transcript.outcome == "CANCELLED":
         raise InterruptedError(transcript.message or "Processing cancelled")
     words = transcript.words
+    plot_dialogue = choose_dialogue(structure, words)
+    dialogue_summary = {**{k: v for k, v in plot_dialogue.items() if k != "cues"},
+                        "tracks": [{k: v for k, v in t.items() if k != "cues"} for t in plot_dialogue["tracks"]]}
+    unit_summary = {"status": "unavailable", "reason": "Structure/source hash unavailable"}
+    if structure.get("source_hash"):
+        units = build_units(info.duration, cuts, plot_dialogue, structure["active"], structure["source_hash"], audio_index)
+        unit_path = save_units(cache_folder, units)
+        _write_manifest(folder / "episode-units.json", units)
+        unit_summary = {"status": "created", "cache_artifact": str(unit_path),
+                        "scenes": len(units["scenes"]), "shots": len(units["shots"]), "utterances": len(units["utterances"])}
+        progress(f"Dialogue source · {plot_dialogue['source']} · {unit_summary['scenes']} structural scenes (not semantic summaries)")
     if transcript.status == "failed":
         progress(f"Transcription failed ({transcript.device}/{transcript.precision}): {transcript.message}")
     elif transcript.status == "unavailable":
@@ -1859,6 +1883,7 @@ def process_video(path: Path, output_root: Path, model_size: str, clip_count: in
                     "transcription_task": transcription_task,
                     "clips": report_clips, "candidate_selection": candidate_report, "editorial_analysis": editorial_summary,
                     "structure": {k: v for k, v in structure.items() if k != "tracks"},
+                    "dialogue_source": dialogue_summary, "episode_units": unit_summary,
                     "semantic_analysis": semantic_summary, "candidate_storyboard": dict(storyboard_summary),
                     "review_artifacts": dict(review_artifacts),
                     "queue_stage": queue_stage, "stage_timings": dict(stage_timings),
@@ -1951,7 +1976,9 @@ def process_video(path: Path, output_root: Path, model_size: str, clip_count: in
         for shot, placement in zip(reframe_plan.get("shots", []), caption_plan):
             shot["caption_placement"] = placement
         render_info = render(path, folder / filename, info, clip, words, audio_index is not None, cancel, encoder,
-                             reframe_plan, caption_plan, audio_index, caption_source != "None")
+                             reframe_plan, caption_plan, audio_index, caption_source != "None",
+                             caption_cues=clipped_cues(plot_dialogue["cues"], clip["start"], clip["end"])
+                             if caption_source == "Release subtitles" else None)
         stage_timings[f"clip_{index:03}_render_call_seconds"] = round(time.perf_counter() - clip_started, 3)
         stage_timings[f"clip_{index:03}_encoding_seconds"] = render_info.get("encode_seconds", 0)
         stage_timings[f"clip_{index:03}_validation_seconds"] = render_info.get("validation_seconds", 0)

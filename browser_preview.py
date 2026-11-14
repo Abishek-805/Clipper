@@ -30,7 +30,7 @@ _STATE = {"state": "idle", "status": "Choose one local video file.", "logs": [],
 _MANIFEST_CACHE: dict[str, tuple[int, dict]] = {}
 _GPU_SAMPLE = {"sampling": False, "time": 0.0, "value": {"available": False}}
 _GPU_LOCK = threading.Lock()
-_ALLOWED_CAPTIONS = {"Whisper transcription", "Whisper translation to English", "None"}
+_ALLOWED_CAPTIONS = {"Whisper transcription", "Whisper translation to English", "Release subtitles", "None"}
 _STATUS_REPORT_FIELDS = ("schema", "job_id", "source", "source_path", "source_size", "source_mtime_ns",
     "source_fingerprint", "selected_audio_stream_index", "selected_audio_stream", "caption_mode",
     "visual_analysis", "transcription_executed", "transcription_device", "transcription_compute_type", "transcription_fallback_reason", "cache",
@@ -275,7 +275,9 @@ class Handler(BaseHTTPRequestHandler):
                     source, _ = _probe_source(query.get("source", [""])[0])
                     key = hashlib.sha256(str(source.resolve()).casefold().encode()).hexdigest()[:20]
                     value = prepare_structure(source, ANALYSIS_CACHE / key)
-                return self._json({**value, "filter_enabled": (_read_json(PREFERENCES) or {}).get("structure_filter_enabled", True)})
+                from dialogue import assess_tracks
+                return self._json({**value, "tracks": [{k: v for k, v in t.items() if k != "cues"} for t in assess_tracks(value)],
+                                   "filter_enabled": (_read_json(PREFERENCES) or {}).get("structure_filter_enabled", True)})
             except Exception as exc: return self._json({"error": str(exc)}, 400)
         if parsed.path == "/api/jobs":
             jobs = []
@@ -370,15 +372,17 @@ class Handler(BaseHTTPRequestHandler):
                         enabled = body.get("filter_enabled", True)
                         if type(enabled) is not bool:
                             raise ValueError("filter_enabled must be a boolean")
-                        write_structure_json(value["override_file"], overrides)
-                        preferences = _read_json(PREFERENCES) or {}
-                        preferences["structure_filter_enabled"] = enabled
-                        _write_json(PREFERENCES, preferences)
+                        folder = None
                         if body.get("job_id"):
                             folder = _job_path(body["job_id"])
                             saved = json.loads((folder / "analysis.json").read_text(encoding="utf-8"))
                             if Path(saved["source_path"]).resolve() != source:
                                 raise ValueError("Job source differs from selected episode")
+                        write_structure_json(value["override_file"], overrides)
+                        preferences = _read_json(PREFERENCES) or {}
+                        preferences["structure_filter_enabled"] = enabled
+                        _write_json(PREFERENCES, preferences)
+                        if folder is not None:
                             value["overrides"] = overrides
                             write_structure_json(folder / "structure-overrides-pending.json", value)
                         return self._json({"ok": True, "active": value["active"]})

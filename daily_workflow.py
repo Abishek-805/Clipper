@@ -29,9 +29,15 @@ def manual_clip(source: Path, folder: Path, cache_root: Path, audio_index, start
     start, end = interval(start, end, info.duration)
     words = []
     transcription = None
+    release_structure = None
     manager = ModelManager("small", local_files_only=True)
     try:
-        if caption_mode != "None":
+        if caption_mode == "Release subtitles":
+            key = hashlib.sha256(str(source.resolve()).casefold().encode()).hexdigest()[:20]
+            release_structure = clipper.prepare_structure(source, cache_root / key)
+            selected = clipper.release_cues(release_structure)
+            words = [clipper.Word(**c) for c in selected["cues"]]
+        elif caption_mode != "None":
             key = hashlib.sha256(str(source.resolve()).casefold().encode()).hexdigest()[:20]
             transcription = clipper.transcribe(source, info.has_audio, "small", cache_root / key / "transcription.json",
                 cancel, model_manager=manager, audio_index=audio_index,
@@ -45,16 +51,21 @@ def manual_clip(source: Path, folder: Path, cache_root: Path, audio_index, start
     if cancel.is_set():
         raise InterruptedError("Cancelled")
     folder.mkdir(parents=True, exist_ok=False)
+    if release_structure is not None:
+        transcription = clipper.release_subtitle_transcription(release_structure, folder)
+        clipper._write_manifest(folder / "structure.json", release_structure)
     stat = source.stat()
     record = {"filename": "clip_001.mp4", "start": start, "end": end, "duration": end-start,
               "selection": "MANUAL", "overlays": overlays or {}}
     manifest = {"source": source.name, "source_path": str(source.resolve()), "source_size": stat.st_size,
         "source_mtime_ns": stat.st_mtime_ns, "settings": {"audio_stream_index": audio_index,
-        "caption_mode": caption_mode, "encoder": "auto"}, "clips": [], "selection_status": "PROVISIONAL"}
+        "caption_mode": caption_mode, "encoder": "auto"}, "caption_source": caption_mode,
+        "clips": [], "selection_status": "PROVISIONAL"}
     clipper._write_manifest(folder / "analysis.json", manifest)
     clipper._write_manifest(folder / "pending-edits.json", {"start": start, "end": end, "overlays": overlays})
     result = clipper.render(source, folder / record["filename"], info, record, words, info.has_audio, cancel,
-        audio_index=audio_index, captions_required=bool(words), render_preset=preset, overlays=overlays)
+        audio_index=audio_index, captions_required=bool(words), render_preset=preset, overlays=overlays,
+        caption_cues=clipper.clipped_cues(selected["cues"], start, end) if release_structure is not None else None)
     record.update(render=result, validation="VALIDATED")
     manifest["clips"] = [record]
     if transcription:
