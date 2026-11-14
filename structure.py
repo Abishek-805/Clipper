@@ -201,7 +201,10 @@ def write_json(path, value):
         temporary.unlink(missing_ok=True)
 
 
-def prepare_structure(path, cache_folder, job_folder=None):
+def prepare_structure(path, cache_folder, job_folder=None, source_profile=None):
+    if source_profile is not None:
+        from source_profiles import validate_profile
+        validate_profile(source_profile)
     digest = hashlib.sha256()
     with Path(path).open("rb") as handle:
         for block in iter(lambda: handle.read(1024 * 1024), b""):
@@ -221,6 +224,12 @@ def prepare_structure(path, cache_folder, job_folder=None):
         raise ValueError("Expected at most 500 zone override records")
     result = {**data, "overrides": records, "override_file": str(override_path),
               "active": apply_overrides(data["detected"], records, data["duration"])}
+    if source_profile is not None:
+        from source_profiles import profile_zones
+        result["source_profile"] = source_profile
+        active = profile_zones(result["active"], source_profile)
+        result["profile_ignored"] = [z for z in result["active"] if z not in active]
+        result["active"] = active
     confirmation_path = Path(cache_folder) / f"subtitle-confirmations-{source_hash[:20]}.json"
     result["confirmation_file"] = str(confirmation_path)
     result["subtitle_confirmations"] = json.loads(confirmation_path.read_text(encoding="utf-8")) if confirmation_path.exists() else []

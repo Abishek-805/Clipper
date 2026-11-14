@@ -11,7 +11,7 @@ const {chromium}=require(process.env.CLIPPER_PLAYWRIGHT_MODULE||'playwright');
   page.on('request',r=>{if(r.method()!=='POST')return;if(/\/api\/(start|manual|rerender)$/.test(r.url()))processing++;
    if(r.url().endsWith('/api/known-moments')&&['confirm','reject','edit'].includes(r.postDataJSON()?.action))annotations++});
   await page.goto(process.env.CLIPPER_UI_URL||'http://127.0.0.1:8775');
-  await page.getByRole('button',{name:'New episode',exact:true}).click();
+  await page.getByRole('button',{name:'New recording',exact:true}).click();
   await page.getByRole('textbox',{name:'Video file',exact:true}).fill(source);
   await page.getByRole('button',{name:'Inspect tracks',exact:true}).click();
   await page.waitForFunction(()=>!document.querySelector('#start').disabled&&document.querySelector('#audio').value!=='');

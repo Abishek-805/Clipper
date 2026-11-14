@@ -1,6 +1,6 @@
 # Clipper Personal Daily
 
-A local Windows application for turning **one episode at a time** into reviewable vertical clips. Automatic suggestions are provisional. You can always enter your own source interval, correct captions, add optional hook/context text, and export locally.
+A local Windows application for turning **one recording at a time** into reviewable vertical clips: films, animation, interviews, news broadcasts, sports/gameplay and presentations. Automatic suggestions are provisional. You can always enter your own source interval, correct captions, add optional hook/context text, and export locally.
 
 ## Launch
 
@@ -19,6 +19,10 @@ The launcher opens `http://127.0.0.1:8770/` in your browser. Keep the server con
 For an in-app browser, open that URL there. No processing starts until you click Generate or Create my draft. Closing or reopening the page does not restart processing.
 
 ## Daily workflow
+
+Choose a **Source profile** before generating or marking a clip. **Broadcast**, **Sports / gameplay** and **Presentation** retain the entire source picture over a blurred background, preserving tickers, scoreboards and shared screens. **General** keeps existing smart framing. Choose **Animation** for the existing automatic OP/ED chapter/subtitle exclusions and position warnings. Other profiles apply only your manual exclusion overrides; detection evidence remains stored unchanged. Profiles are explicit choices, not AI genre detection, and are saved with new jobs. Existing exports keep their saved layout when reopened or rerendered.
+
+Broadcast support means local recorded files; no live capture, stream ingestion or downloading is included. Preserving the full picture can make small source text hard to read in a vertical export. Review framing and captions before posting.
 
 1. Click **Choose file** to use the browser file chooser, or paste a full local path and click **Inspect tracks**. Browser-selected files stay on this PC. Known originals are reused only after an exact SHA-256 content check; new files are stored under `Shorts_Output/Imports/` once. Importing does not start clipping.
 2. Select the desired audio track. English is selected only when metadata identifies one unambiguous English track. Listen to confirm it.

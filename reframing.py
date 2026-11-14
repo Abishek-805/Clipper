@@ -163,7 +163,16 @@ def _text_like_boxes(gray, cv2, scale_x: float, scale_y: float) -> list[tuple[fl
 
 
 def build_reframe_plan(source: Path, start: float, end: float, cuts: list[float],
-                       cancel=None, min_coverage: float = MIN_SALIENCY_COVERAGE) -> dict:
+                       cancel=None, min_coverage: float = MIN_SALIENCY_COVERAGE,
+                       preserve_source: bool = False) -> dict:
+    if preserve_source:
+        if cancel and cancel.is_set():
+            raise InterruptedError("Processing cancelled")
+        return {"version": PLAN_VERSION, "status": "full_frame_requested", "analysis_samples": 0,
+                "reason": "Preserve source graphics, scoreboards and shared screens",
+                "shots": [{"shot_id": 0, "start": start, "end": end,
+                           "composition": "full_frame_contain", "crop": None,
+                           "focus_path": [], "obstructions": [], "evidence": "Owner-selected source profile"}]}
     import cv2
     import numpy as np
     cap = cv2.VideoCapture(str(source))

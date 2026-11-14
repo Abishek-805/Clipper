@@ -568,6 +568,13 @@ def _interval_iou(first: dict, second: dict) -> float:
     return intersection / union if union else 0.0
 
 
+def _duplicate_interval(first: dict, second: dict, iou_threshold: float = .35) -> bool:
+    overlap = max(0., min(first["end"], second["end"]) - max(first["start"], second["start"]))
+    shorter = min(first["end"] - first["start"], second["end"] - second["start"])
+    # IoU alone misses a short replay nested inside a longer selected event.
+    return _interval_iou(first, second) > iou_threshold or (shorter > 0 and overlap / shorter > .8)
+
+
 def generate_candidates(duration: float, motion: list[float], audio: list[float], cuts: list[float], words: list[Word],
                         min_length: int = 20, max_length: int = 55,
                         cancel: threading.Event | None = None, context_margin: float = 4.0) -> dict:
@@ -774,7 +781,7 @@ def deduplicate_candidates(candidates: list[dict], iou_threshold: float = 0.35,
     for candidate in sorted(candidates, key=lambda item: item["score"], reverse=True):
         if cancel and cancel.is_set():
             raise InterruptedError("Processing cancelled")
-        duplicate = next((prior for prior in kept if _interval_iou(candidate, prior) > iou_threshold), None)
+        duplicate = next((prior for prior in kept if _duplicate_interval(candidate, prior, iou_threshold)), None)
         if duplicate:
             rejected.append({"start": candidate["start"], "end": candidate["end"], "reason": "overlap duplicate",
                              "duplicate_of": [duplicate["start"], duplicate["end"]], "iou": round(_interval_iou(candidate, duplicate), 3)})
@@ -830,7 +837,7 @@ def select_diverse_candidates(candidates: list[dict], count: int, duration: floa
             return item["score"] * temporal + category_bonus + coverage_bonus
         remaining.sort(key=diversity_score, reverse=True)
         candidate = remaining.pop(0)
-        conflict = next((prior for prior in selected if _interval_iou(candidate, prior) > 0.35 or
+        conflict = next((prior for prior in selected if _duplicate_interval(candidate, prior) or
                          (candidate["start"] >= prior["end"] and candidate["start"] - prior["end"] < minimum_distance) or
                          (prior["start"] >= candidate["end"] and prior["start"] - candidate["end"] < minimum_distance)), None)
         if conflict:
@@ -1499,7 +1506,10 @@ def process_video(path: Path, output_root: Path, model_size: str, clip_count: in
                   audio_index: int | None = None, caption_source: str = "whisper",
                   transcription_task: str = "transcribe", subtitle_index: int | None = None,
                   cache_root: Path | None = None, job_output_folder: Path | None = None,
-                  structure_filter_enabled: bool = True) -> int:
+                  structure_filter_enabled: bool = True, source_profile: str | None = None) -> int:
+    from source_profiles import validate_profile, FULL_FRAME
+    if source_profile is not None:
+        validate_profile(source_profile)
     total_started = time.perf_counter()
     stage_timings = {}
     stage_started = time.perf_counter()
@@ -1524,9 +1534,10 @@ def process_video(path: Path, output_root: Path, model_size: str, clip_count: in
     include_ranges = parse_time_ranges(os.getenv("CLIPPER_INCLUDE_RANGES", ""))
     exclude_ranges = parse_time_ranges(os.getenv("CLIPPER_EXCLUDE_RANGES", ""))
     settings = {"model": model_size, "clip_count": clip_count, "min_length": min_length, "max_length": max_length,
-                "context_margin": context_margin,
+                "context_margin": context_margin, "source_profile": source_profile,
                 "include_ranges": include_ranges, "exclude_ranges": exclude_ranges,
                 "encoder": encoder, "candidate_engine": "scene-aware-variable-v1",
+                "duplicate_engine": "iou-or-containment-v2",
                 "semantic_enabled": semantic_enabled, "transcription_enabled": transcription_enabled,
                 "editorial_engine": "editorial-v1", "local_editorial_model": os.getenv("CLIPPER_LOCAL_LLM_MODEL", ""),
                 "local_editorial_endpoint": os.getenv("CLIPPER_LOCAL_LLM_ENDPOINT", ""),
@@ -1541,7 +1552,7 @@ def process_video(path: Path, output_root: Path, model_size: str, clip_count: in
                 "structure_filter_enabled": structure_filter_enabled, "structure_version": STRUCTURE_VERSION}
     progress("Structure inspection · chapters and embedded subtitle evidence; no AI")
     try:
-        structure = prepare_structure(path, cache_folder, folder)
+        structure = prepare_structure(path, cache_folder, folder, source_profile=source_profile)
     except (subprocess.SubprocessError, OSError) as exc:
         structure = {"active": [], "detected": [], "status": "unavailable", "reason": str(exc)}
         progress(f"Structure inspection unavailable; unknown regions stay eligible: {exc}")
@@ -1962,7 +1973,10 @@ def process_video(path: Path, output_root: Path, model_size: str, clip_count: in
         progress(f"Rendering clip {index}/{len(clips)} from {path.name}")
         clip_started = time.perf_counter()
         try:
-            reframe_plan = build_reframe_plan(path, clip["start"], clip["end"], cuts, cancel)
+            if source_profile in FULL_FRAME:
+                reframe_plan = build_reframe_plan(path, clip["start"], clip["end"], cuts, cancel, preserve_source=True)
+            else:
+                reframe_plan = build_reframe_plan(path, clip["start"], clip["end"], cuts, cancel)
         except InterruptedError:
             raise
         except Exception as exc:

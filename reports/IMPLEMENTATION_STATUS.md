@@ -1,5 +1,13 @@
 # Clipper implementation status
 
+## Universal recordings — source profiles and overlap deduplication (2026-11-14)
+
+- Branch `codex/universal-recordings` from verified playbook tip `37cd8f379326c781bea8d939c979a1470c217577`. Inspected both requested repositories at pinned revisions; independently reused Clipper's existing renderer and selection helpers. No reference code, cloud services or packages installed.
+- Browser source profiles cover General, Animation, Broadcast, Sports/gameplay and Presentation. Full-frame profiles preserve the source picture; animation-specific automatic exclusion evidence applies only to Animation. Owner zones apply throughout; raw detections/caches and legacy research behavior remain unchanged. Manual/automatic jobs persist the profile; rerender retains the saved framing. Nested temporal duplicates now use shared symmetric containment checks.
+- Baseline **326 + 9 subtests**; final **338 passed + 9 subtests**, 0 failed/skipped (47.71 s). **15 Playwright UI checks** pass with zero processing requests/page errors; synthetic render/rerender validated at 1080×1920. Compilation/diff checks and 18 preserved-data/14 playbook hashes pass.
+- Real broadcast footage, audible language, sync and editorial quality are **not verified**. No live capture/stream ingestion. The 2B model gate remains failed and no semantic selector was enabled.
+- [Pinned-code comparison, changes and evidence](universal-recordings-report.md).
+
 ## Editorial playbook — Integrated, real scene gate failed (2026-11-14)
 
 - Branch `feature/personal-v1-playbook` from verified 3B remote `cda29330106004a69fa5610bba61436e37b8f40a`; integration commit `9649245`.

@@ -19,6 +19,7 @@ from main import ANALYSIS_CACHE, APP_STATE, OUTPUT, PREFERENCES, _read_json, _wh
 from model_manager import ModelManager
 from diagnostics import gpu_activity
 from source_import import import_source
+from source_profiles import validate_profile, profile_zones
 from daily_workflow import manual_clip, restore_version, byte_range, export_delivery
 from glossary import load_glossary, glossary_path
 from structure import prepare_structure, apply_overrides, write_json as write_structure_json
@@ -32,7 +33,7 @@ _MANIFEST_CACHE: dict[str, tuple[int, dict]] = {}
 _GPU_SAMPLE = {"sampling": False, "time": 0.0, "value": {"available": False}}
 _GPU_LOCK = threading.Lock()
 _ALLOWED_CAPTIONS = {"Whisper transcription", "Whisper translation to English", "Release subtitles", "None"}
-_STATUS_REPORT_FIELDS = ("schema", "job_id", "source", "source_path", "source_size", "source_mtime_ns",
+_STATUS_REPORT_FIELDS = ("schema", "job_id", "source", "source_profile", "source_path", "source_size", "source_mtime_ns",
     "source_fingerprint", "selected_audio_stream_index", "selected_audio_stream", "caption_mode",
     "visual_analysis", "transcription_executed", "transcription_device", "transcription_compute_type", "transcription_fallback_reason", "cache",
     "candidate_count", "selected_draft_count", "selection_status", "job_output_directory", "failure", "drafts")
@@ -99,17 +100,18 @@ def _open_job(job_id: str):
              rendering=False, rerender_result=None, status="Opened saved job")
 
 
-def _run_job(source: Path, audio_index: int | None, caption_mode: str, job_id: str):
+def _run_job(source: Path, audio_index: int | None, caption_mode: str, job_id: str, source_profile="general"):
     global _CANCEL
     try:
-        _execute_job(source, audio_index, caption_mode, job_id)
+        _execute_job(source, audio_index, caption_mode, job_id, source_profile)
     except Exception as exc:
         _publish(state="failed", rendering=False, status=f"Could not run job: {exc}")
     finally:
         with _LOCK: _CANCEL = None
 
 
-def _execute_job(source: Path, audio_index: int | None, caption_mode: str, job_id: str):
+def _execute_job(source: Path, audio_index: int | None, caption_mode: str, job_id: str, source_profile="general"):
+    validate_profile(source_profile)
     global _CANCEL
     job_dir = OUTPUT / "jobs" / job_id
     cache_key = hashlib.sha256(str(source.resolve()).casefold().encode("utf-8")).hexdigest()[:20]
@@ -154,7 +156,8 @@ def _execute_job(source: Path, audio_index: int | None, caption_mode: str, job_i
             progress, str(settings.get("encoder", "auto")), manager, False, None,
             transcription_enabled=caption_mode.startswith("Whisper"), audio_index=audio_index,
             caption_source=caption_mode, transcription_task=task, cache_root=cache_dir,
-            job_output_folder=job_dir, structure_filter_enabled=settings.get("structure_filter_enabled", True))
+            job_output_folder=job_dir, structure_filter_enabled=settings.get("structure_filter_enabled", True),
+            source_profile=source_profile)
         outcome = "interrupted" if cancel.is_set() else "completed"
     except Exception as exc:
         outcome = "interrupted" if cancel.is_set() or isinstance(exc, InterruptedError) else "failed"
@@ -176,7 +179,7 @@ def _execute_job(source: Path, audio_index: int | None, caption_mode: str, job_i
             "source_size": stat.st_size, "source_mtime_ns": stat.st_mtime_ns,
             "source_fingerprint": source_fp, "source_fingerprint_method": "SHA-256(resolved path, size, modification time)",
             "selected_audio_stream_index": audio_index, "selected_audio_stream": audio_stream,
-            "caption_mode": caption_mode,
+            "caption_mode": caption_mode, "source_profile": source_profile,
             "transcription_task": "translate" if caption_mode == "Whisper translation to English" else "transcribe",
             "transcription_device": analysis.get("transcription_device", "not run"),
             "transcription_compute_type": analysis.get("transcription_precision", "not run"),
@@ -282,7 +285,8 @@ class Handler(BaseHTTPRequestHandler):
                 else:
                     source, _ = _probe_source(query.get("source", [""])[0])
                     key = hashlib.sha256(str(source.resolve()).casefold().encode()).hexdigest()[:20]
-                    value = prepare_structure(source, ANALYSIS_CACHE / key)
+                    value = prepare_structure(source, ANALYSIS_CACHE / key,
+                                              source_profile=query.get("source_profile", ["general"])[0])
                 from dialogue import assess_tracks
                 return self._json({**value, "tracks": [{k: v for k, v in t.items() if k != "cues"} for t in assess_tracks(value)],
                                    "filter_enabled": value.get("filter_enabled", (_read_json(PREFERENCES) or {}).get("structure_filter_enabled", True))})
@@ -434,6 +438,7 @@ class Handler(BaseHTTPRequestHandler):
                         if not isinstance(overrides, list) or len(overrides) > 500:
                             raise ValueError("Expected at most 500 overrides")
                         value["active"] = apply_overrides(value["detected"], overrides, value["duration"])
+                        value["active"] = profile_zones(value["active"], body.get("source_profile", "general"))
                         enabled = body.get("filter_enabled", True)
                         if type(enabled) is not bool:
                             raise ValueError("filter_enabled must be a boolean")
@@ -477,6 +482,7 @@ class Handler(BaseHTTPRequestHandler):
                     from daily_workflow import interval
                     left, right = interval(body.get("start"), body.get("end"), info.duration)
                     mode = body.get("caption_mode", "Whisper transcription")
+                    source_profile = validate_profile(body.get("source_profile", "general"))
                     if mode not in _ALLOWED_CAPTIONS:
                         raise ValueError("Invalid caption mode")
                     job_id = "manual-" + time.strftime("%Y%m%d-%H%M%S") + "-" + uuid.uuid4().hex[:8]
@@ -487,7 +493,7 @@ class Handler(BaseHTTPRequestHandler):
                         global _CANCEL
                         try:
                             manual_clip(source, _job_path(job_id), ANALYSIS_CACHE, audio, left, right, mode,
-                                body.get("allow_transcription") is True, cancel, body.get("render_preset", "fast"), body.get("overlays"))
+                                body.get("allow_transcription") is True, cancel, body.get("render_preset", "fast"), body.get("overlays"), source_profile)
                             _open_job(job_id)
                         except Exception as exc:
                             _publish(state="interrupted" if cancel.is_set() else "failed", status=str(exc))
@@ -570,12 +576,13 @@ class Handler(BaseHTTPRequestHandler):
             if audio and (not isinstance(audio_index, int) or audio_index not in {s["index"] for s in audio}):
                 raise ValueError("Select a valid audio track from the inspected source.")
             caption_mode = body.get("caption_mode")
+            source_profile = validate_profile(body.get("source_profile", "general"))
             if caption_mode not in _ALLOWED_CAPTIONS: raise ValueError("Unsupported caption mode.")
             if caption_mode.startswith("Whisper") and not _whisper_model_cached("small"):
                 raise ValueError("The local Whisper small model is not cached; no download was attempted.")
             job_id = time.strftime("%Y%m%d-%H%M%S") + "-" + uuid.uuid4().hex[:8]
         except Exception as exc: return self._json({"error": str(exc)}, 400)
-        thread = threading.Thread(target=_run_job, args=(source, audio_index, caption_mode, job_id), daemon=True)
+        thread = threading.Thread(target=_run_job, args=(source, audio_index, caption_mode, job_id, source_profile), daemon=True)
         with _LOCK:
             if _operation_active():
                 return self._json({"error": "An operation is already running"}, 409)
