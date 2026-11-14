@@ -58,3 +58,9 @@ The current selector measures activity and dialogue; it cannot reliably establis
 ```
 
 Historical research and the blind human-benchmark workspace remain separate under `evaluation/`, `review_workspace/`, and `reports/`. Use `run-review.bat` for the optional VLC review workspace. No cleanup operation automatically deletes or moves your files.
+
+### Browser UI checks
+
+`tests/ui-review.cjs` uses Playwright 1.57 and installed Microsoft Edge in headless mode. Start the server on port 8771 with a saved captioned job available. Set `CLIPPER_PLAYWRIGHT_MODULE` to your Playwright module directory, then run `node tests/ui-review.cjs`. An ordinary `playwright` installation also works without that variable. Override the server with `CLIPPER_UI_URL` and browser executable with `CLIPPER_BROWSER`.
+
+Checks cover the saved-job layout, desktop/mobile overflow, caption editing, polling/reload recovery, file inspection, and idle startup. The test creates no processing jobs, edits only disposable browser storage, and writes screenshots/results under ignored `.runtime/ui-review/`.
