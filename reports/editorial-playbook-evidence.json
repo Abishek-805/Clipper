@@ -1,0 +1,1148 @@
+{
+  "branch": "feature/personal-v1-playbook",
+  "baseline": "cda29330106004a69fa5610bba61436e37b8f40a",
+  "implementation": "9649245",
+  "model_sha256": "089d75c52f4b7ffc56ba998ffc50aae89fcafc755f9e7208aacca281dca6c2ae",
+  "source_hash": "28982060e5dcf4e743c7448859f1319b1726338d91c387f0bac15277360c0476",
+  "subtitle_source": {
+    "source": "cached Whisper words",
+    "stream_index": null,
+    "reason": "No unique reliable English dialogue track; Whisper fallback"
+  },
+  "cohort_sha256": "fac364ead0edaf2f83cae83493351ed63661df423212ecf21be7432de912fe16",
+  "status": "completed",
+  "gate_passed": false,
+  "gate_rule": "At least 28/32 accepted by supplied scene_summary validator; zero attribution/relationship violations",
+  "metrics": {
+    "executed": 32,
+    "json_valid_rate": 1.0,
+    "literal_integrity_pass_count": 24,
+    "unsupported_name_rate": null,
+    "name_count": 0,
+    "unsupported_quote_rate": null,
+    "quote_count": 0,
+    "valid_id_rate": null,
+    "reference_count": 0,
+    "invented_fact_rate": null,
+    "fact_audit": "PENDING_SOURCE_ENTAILMENT_REVIEW",
+    "attribution_violation_responses": 1,
+    "relationship_violation_responses": 0,
+    "generic_label_entries": 0,
+    "unsupported_proper_name_entries": 0,
+    "normalization_records": 0
+  },
+  "rejections_by_rule": {
+    "word_limit": [
+      "SC_0005",
+      "SC_0009",
+      "SC_0015",
+      "SC_0018",
+      "SC_0024",
+      "SC_0026"
+    ],
+    "name_list": [
+      "SC_0020",
+      "SC_0027"
+    ],
+    "attribution": [
+      "SC_0020"
+    ]
+  },
+  "rows": [
+    {
+      "scene_id": "SC_0001",
+      "start": 0.0,
+      "end": 34.66,
+      "seconds": 1.343,
+      "output": {
+        "summary": "A streamer discusses a Sword Art Online promo and the game launch.",
+        "names_used": [
+          "Art",
+          "Kayaba",
+          "Klein",
+          "NerveGear",
+          "Online"
+        ],
+        "tone": "calm",
+        "fight_described": false
+      },
+      "accepted": true,
+      "errors": [],
+      "warnings": [],
+      "names": [
+        "Art",
+        "Kayaba",
+        "Klein",
+        "NerveGear",
+        "Online"
+      ],
+      "estimated_prompt_tokens": 295,
+      "actual_prompt_tokens": 333,
+      "prompt_sha256": "44a6f0ad93cb791330474078179b2a1cee5f4d4dc55df70d54658947739388fe"
+    },
+    {
+      "scene_id": "SC_0002",
+      "start": 34.66,
+      "end": 44.294,
+      "seconds": 0.702,
+      "output": {
+        "summary": "MMO stream covers international Sword Art anime episode.",
+        "names_used": [
+          "Sword"
+        ],
+        "tone": "calm",
+        "fight_described": false
+      },
+      "accepted": true,
+      "errors": [],
+      "warnings": [],
+      "names": [
+        "Art",
+        "Kayaba",
+        "Klein",
+        "NerveGear",
+        "Sword"
+      ],
+      "estimated_prompt_tokens": 261,
+      "actual_prompt_tokens": 292,
+      "prompt_sha256": "ba736433b2b01d927fed26b90eb57918bd3baa67efc92ba67484730154a6ccea"
+    },
+    {
+      "scene_id": "SC_0003",
+      "start": 44.294,
+      "end": 112.237,
+      "seconds": 0.732,
+      "output": {
+        "summary": "A character says goodbye as another leaves for practice.",
+        "names_used": [
+          "Klein"
+        ],
+        "tone": "calm",
+        "fight_described": false
+      },
+      "accepted": true,
+      "errors": [],
+      "warnings": [],
+      "names": [
+        "Kayaba",
+        "Klein",
+        "NerveGear"
+      ],
+      "estimated_prompt_tokens": 269,
+      "actual_prompt_tokens": 310,
+      "prompt_sha256": "095c1c3a210e180725489cb2c884a49ec8a011ae12d17e418c56a5b18c166cb2"
+    },
+    {
+      "scene_id": "SC_0004",
+      "start": 112.237,
+      "end": 197.823,
+      "seconds": 0.815,
+      "output": {
+        "summary": "Klein introduces himself and offers tips to a newcomer on the lower floors.",
+        "names_used": [
+          "Klein",
+          "Kirito"
+        ],
+        "tone": "calm",
+        "fight_described": false
+      },
+      "accepted": true,
+      "errors": [],
+      "warnings": [],
+      "names": [
+        "Kayaba",
+        "Kirito",
+        "Klein",
+        "NerveGear"
+      ],
+      "estimated_prompt_tokens": 338,
+      "actual_prompt_tokens": 434,
+      "prompt_sha256": "8555d0a103c55961b9480b3f7aa95886324b6836cb15f793ffebdc622cc2f597"
+    },
+    {
+      "scene_id": "SC_0005",
+      "start": 197.823,
+      "end": 227.978,
+      "seconds": 1.104,
+      "output": {
+        "summary": "A character says they can't feel pain, and another responds that it's a habit, while a third character says the first move is important.",
+        "names_used": [
+          "Kayaba",
+          "Klein",
+          "NerveGear"
+        ],
+        "tone": "explanatory",
+        "fight_described": false
+      },
+      "accepted": false,
+      "errors": [
+        "summary longer than 20 words"
+      ],
+      "warnings": [],
+      "names": [
+        "Kayaba",
+        "Klein",
+        "NerveGear"
+      ],
+      "estimated_prompt_tokens": 332,
+      "actual_prompt_tokens": 410,
+      "prompt_sha256": "fd4989938be015d47259c3ffb2bdf32f3d9a48a38cf912034288613bc404203b"
+    },
+    {
+      "scene_id": "SC_0006",
+      "start": 227.978,
+      "end": 240.0,
+      "seconds": 0.911,
+      "output": {
+        "summary": "The system explains a simple method to achieve a target, with a character suggesting an easier approach.",
+        "names_used": [
+          "Kayaba",
+          "Klein"
+        ],
+        "tone": "calm",
+        "fight_described": false
+      },
+      "accepted": true,
+      "errors": [],
+      "warnings": [],
+      "names": [
+        "Kayaba",
+        "Klein",
+        "NerveGear"
+      ],
+      "estimated_prompt_tokens": 275,
+      "actual_prompt_tokens": 313,
+      "prompt_sha256": "4271feddba5964e0ec9100e3213d229ca2569ceb27d38445a09f9d1245a94acd"
+    },
+    {
+      "scene_id": "SC_0007",
+      "start": 240.0,
+      "end": 263.138,
+      "seconds": 0.899,
+      "output": {
+        "summary": "After starting a move, wait for skills to activate and drive it home.",
+        "names_used": [
+          "Kayaba",
+          "Klein",
+          "NerveGear"
+        ],
+        "tone": "calm",
+        "fight_described": false
+      },
+      "accepted": true,
+      "errors": [],
+      "warnings": [],
+      "names": [
+        "Kayaba",
+        "Klein",
+        "NerveGear"
+      ],
+      "estimated_prompt_tokens": 282,
+      "actual_prompt_tokens": 318,
+      "prompt_sha256": "200f6385c65593e49aef7786652d41bf5710ccba0ef0c9069f7c08ec69f96384"
+    },
+    {
+      "scene_id": "SC_0008",
+      "start": 263.138,
+      "end": 278.403,
+      "seconds": 0.649,
+      "output": {
+        "summary": "Congratulations.",
+        "names_used": [
+          "Kayaba"
+        ],
+        "tone": "happy",
+        "fight_described": false
+      },
+      "accepted": true,
+      "errors": [],
+      "warnings": [],
+      "names": [
+        "Kayaba",
+        "Klein",
+        "NerveGear"
+      ],
+      "estimated_prompt_tokens": 245,
+      "actual_prompt_tokens": 276,
+      "prompt_sha256": "82ac26ec87eab71f8568f8a1690d1b09c85edc0e7d3fee3f768a9a9d0a24d647"
+    },
+    {
+      "scene_id": "SC_0009",
+      "start": 278.403,
+      "end": 317.817,
+      "seconds": 1.216,
+      "output": {
+        "summary": "A group discusses a boss in an RPG that's as weak as slimes, with one character calling it addictive and another noting it's an RPG without magic.",
+        "names_used": [
+          "Kayaba",
+          "Klein",
+          "NerveGear",
+          "RPG"
+        ],
+        "tone": "funny",
+        "fight_described": false
+      },
+      "accepted": false,
+      "errors": [
+        "summary longer than 20 words"
+      ],
+      "warnings": [],
+      "names": [
+        "Kayaba",
+        "Klein",
+        "NerveGear",
+        "RPG"
+      ],
+      "estimated_prompt_tokens": 376,
+      "actual_prompt_tokens": 496,
+      "prompt_sha256": "9e33e6c35d8703df23d16b9fb4dd3ddd2a9f398836fa47cd352982697487db62"
+    },
+    {
+      "scene_id": "SC_0010",
+      "start": 317.817,
+      "end": 338.463,
+      "seconds": 0.964,
+      "output": {
+        "summary": "A character says it's fun to move while fighting, and another confirms readiness to continue.",
+        "names_used": [
+          "Kayaba",
+          "Klein"
+        ],
+        "tone": "funny",
+        "fight_described": true
+      },
+      "accepted": true,
+      "errors": [],
+      "warnings": [],
+      "names": [
+        "Kayaba",
+        "Klein",
+        "NerveGear"
+      ],
+      "estimated_prompt_tokens": 297,
+      "actual_prompt_tokens": 361,
+      "prompt_sha256": "a196606f6d0575646dea35119c7fe5c697367a119551747b216ce5d1eacf8091"
+    },
+    {
+      "scene_id": "SC_0011",
+      "start": 338.463,
+      "end": 419.919,
+      "seconds": 1.177,
+      "output": {
+        "summary": "A character shares their excitement about playing SAO, reflecting on their journey and the immersive experience.",
+        "names_used": [
+          "SAO",
+          "Klein",
+          "NerveGear",
+          "Kayaba"
+        ],
+        "tone": "happy",
+        "fight_described": false
+      },
+      "accepted": true,
+      "errors": [],
+      "warnings": [],
+      "names": [
+        "Kayaba",
+        "Klein",
+        "NerveGear",
+        "SAO"
+      ],
+      "estimated_prompt_tokens": 600,
+      "actual_prompt_tokens": 748,
+      "prompt_sha256": "073d8346507e73ee9874e7c08331b987915aeebf1f12ea337945321f41dd4bc1"
+    },
+    {
+      "scene_id": "SC_0012",
+      "start": 419.919,
+      "end": 492.492,
+      "seconds": 1.11,
+      "output": {
+        "summary": "Kayaba and Klein discuss hunger and pizza, with Klein expressing gratitude and Kayaba declining to befriend others.",
+        "names_used": [
+          "Kayaba",
+          "Klein"
+        ],
+        "tone": "funny",
+        "fight_described": false
+      },
+      "accepted": true,
+      "errors": [],
+      "warnings": [],
+      "names": [
+        "Kayaba",
+        "Klein",
+        "NerveGear"
+      ],
+      "estimated_prompt_tokens": 544,
+      "actual_prompt_tokens": 718,
+      "prompt_sha256": "6366343b5439caee2402f64a7ea6e16f113445bc5097ac584e33e8811073f6f9"
+    },
+    {
+      "scene_id": "SC_0013",
+      "start": 492.492,
+      "end": 507.257,
+      "seconds": 0.961,
+      "output": {
+        "summary": "User confirms clip not found, checks menu, expects it to be at bottom.",
+        "names_used": [
+          "Kayaba",
+          "NerveGear"
+        ],
+        "tone": "unclear",
+        "fight_described": false
+      },
+      "accepted": true,
+      "errors": [],
+      "warnings": [],
+      "names": [
+        "Kayaba",
+        "Klein",
+        "NerveGear"
+      ],
+      "estimated_prompt_tokens": 283,
+      "actual_prompt_tokens": 340,
+      "prompt_sha256": "50560a4c3be8f5ddddfa2c8ae428f594e2b0fbf5b39b9931744e30ea92139ea3"
+    },
+    {
+      "scene_id": "SC_0014",
+      "start": 507.257,
+      "end": 558.808,
+      "seconds": 1.37,
+      "output": {
+        "summary": "A player in SAO struggles to log out, frustrated by no response from Game Master despite multiple attempts.",
+        "names_used": [
+          "Game",
+          "SAO",
+          "Master",
+          "Klein",
+          "Dinderai",
+          "Teriyaki",
+          "Kayaba",
+          "NerveGear"
+        ],
+        "tone": "tense",
+        "fight_described": false
+      },
+      "accepted": true,
+      "errors": [],
+      "warnings": [],
+      "names": [
+        "Dinderai",
+        "Game",
+        "Kayaba",
+        "Klein",
+        "Master",
+        "NerveGear",
+        "SAO",
+        "Teriyaki"
+      ],
+      "estimated_prompt_tokens": 451,
+      "actual_prompt_tokens": 626,
+      "prompt_sha256": "d7f86b92dba9f2f399814751d580ed5fa312d90a1339eb8300b68d862bd489d8"
+    },
+    {
+      "scene_id": "SC_0015",
+      "start": 558.808,
+      "end": 667.041,
+      "seconds": 1.61,
+      "output": {
+        "summary": "A character discusses a bug in the nerve gear, expressing frustration and concern about potential consequences, while another character shares personal details about their family and their sister's un",
+        "names_used": [
+          "Kayaba",
+          "Klein",
+          "NerveGear"
+        ],
+        "tone": "tense",
+        "fight_described": false
+      },
+      "accepted": false,
+      "errors": [
+        "summary longer than 20 words"
+      ],
+      "warnings": [],
+      "names": [
+        "Kayaba",
+        "Klein",
+        "NerveGear"
+      ],
+      "estimated_prompt_tokens": 625,
+      "actual_prompt_tokens": 830,
+      "prompt_sha256": "109091774eb9b11100b9bdc949002e09cd0bbf9afe65f0454bb08d7d8546cafd"
+    },
+    {
+      "scene_id": "SC_0016",
+      "start": 667.041,
+      "end": 701.2,
+      "seconds": 0.616,
+      "output": {
+        "summary": "there!",
+        "names_used": [
+          "Kayaba"
+        ],
+        "tone": "urgent",
+        "fight_described": false
+      },
+      "accepted": true,
+      "errors": [],
+      "warnings": [],
+      "names": [
+        "Kayaba",
+        "Klein",
+        "NerveGear"
+      ],
+      "estimated_prompt_tokens": 245,
+      "actual_prompt_tokens": 276,
+      "prompt_sha256": "1e9639b33ec56a4c66a147d300d1b31bb565642a1f22bc1f9df97adde339a189"
+    },
+    {
+      "scene_id": "SC_0017",
+      "start": 701.2,
+      "end": 717.842,
+      "seconds": 0.761,
+      "output": {
+        "summary": "A character exclaims, 'Hell is that thing!'",
+        "names_used": [
+          "Kayaba"
+        ],
+        "tone": "urgent",
+        "fight_described": false
+      },
+      "accepted": true,
+      "errors": [],
+      "warnings": [],
+      "names": [
+        "Kayaba",
+        "Klein",
+        "NerveGear"
+      ],
+      "estimated_prompt_tokens": 250,
+      "actual_prompt_tokens": 279,
+      "prompt_sha256": "f6a250d13b9e3faa4172f0cc462c38ecd14a70e9c3f9a15d24c569e6caaf368b"
+    },
+    {
+      "scene_id": "SC_0018",
+      "start": 717.842,
+      "end": 891.265,
+      "seconds": 2.199,
+      "output": {
+        "summary": "Akihiko Kaya reveals the nerve gear's security, stating it's not a defect and that removing it would kill the user. Players are warned of the risks, and the game has lost 213 players, with no revival.",
+        "names_used": [
+          "Akihiko",
+          "Kaya",
+          "Kirito",
+          "SAO",
+          "NerveGear",
+          "HP",
+          "Aincrad"
+        ],
+        "tone": "tense",
+        "fight_described": false
+      },
+      "accepted": false,
+      "errors": [
+        "summary longer than 20 words"
+      ],
+      "warnings": [],
+      "names": [
+        "Aincrad",
+        "Akihiko",
+        "Art",
+        "HP",
+        "Kaya",
+        "Kayaba",
+        "Kirito",
+        "Klein",
+        "NerveGear",
+        "Online",
+        "SAO",
+        "Sword"
+      ],
+      "estimated_prompt_tokens": 834,
+      "actual_prompt_tokens": 1087,
+      "prompt_sha256": "5542d24f58985ecda929fbf6c011cb47d3988ae17593f9785306d9d77d4fc619"
+    },
+    {
+      "scene_id": "SC_0019",
+      "start": 891.265,
+      "end": 941.315,
+      "seconds": 1.267,
+      "output": {
+        "summary": "Players on floor 1 discuss clearing the game, with disbelief and frustration over the difficulty of reaching floor 100.",
+        "names_used": [
+          "Aincrad",
+          "Kayaba",
+          "Klein",
+          "NerveGear"
+        ],
+        "tone": "angry",
+        "fight_described": false
+      },
+      "accepted": true,
+      "errors": [],
+      "warnings": [],
+      "names": [
+        "Aincrad",
+        "Kayaba",
+        "Klein",
+        "NerveGear"
+      ],
+      "estimated_prompt_tokens": 416,
+      "actual_prompt_tokens": 508,
+      "prompt_sha256": "86b8a87dd68291dbc3805818776bade8afc76eb0d7a82d28f91a332f97ef5f15"
+    },
+    {
+      "scene_id": "SC_0020",
+      "start": 941.315,
+      "end": 955.079,
+      "seconds": 0.778,
+      "output": {
+        "summary": "Mere asks a question, possibly in confusion or inquiry.",
+        "names_used": [
+          "Mere"
+        ],
+        "tone": "unclear",
+        "fight_described": false
+      },
+      "accepted": false,
+      "errors": [
+        "names_used contains 'Mere' which is not in the NAMES list",
+        "summary: speaker attribution 'Mere asks' (no speaker detection exists)"
+      ],
+      "warnings": [],
+      "names": [
+        "Kayaba",
+        "Klein",
+        "NerveGear"
+      ],
+      "estimated_prompt_tokens": 245,
+      "actual_prompt_tokens": 277,
+      "prompt_sha256": "b9a4fd495afa8f3726b6923510f4dd757313fe5c7b1b0e255bd25bfef71e8eb7"
+    },
+    {
+      "scene_id": "SC_0021",
+      "start": 955.079,
+      "end": 972.722,
+      "seconds": 0.835,
+      "output": {
+        "summary": "Kirito and a stranger exchange lines, with the stranger asking who he is.",
+        "names_used": [
+          "Kirito",
+          "Klein"
+        ],
+        "tone": "unclear",
+        "fight_described": false
+      },
+      "accepted": true,
+      "errors": [],
+      "warnings": [],
+      "names": [
+        "Kayaba",
+        "Kirito",
+        "Klein",
+        "NerveGear"
+      ],
+      "estimated_prompt_tokens": 268,
+      "actual_prompt_tokens": 321,
+      "prompt_sha256": "56b1381332306271a01b877860f891da7fc39145898cbb4e6a61255b0df0aec6"
+    },
+    {
+      "scene_id": "SC_0022",
+      "start": 972.722,
+      "end": 1036.535,
+      "seconds": 1.165,
+      "output": {
+        "summary": "A character explains how the nerve gear collects physical data during calibration.",
+        "names_used": [
+          "Akihiko",
+          "Kaya",
+          "Nerve",
+          "NerveGear",
+          "Sword",
+          "Kirito"
+        ],
+        "tone": "explanatory",
+        "fight_described": false
+      },
+      "accepted": true,
+      "errors": [],
+      "warnings": [],
+      "names": [
+        "Akihiko",
+        "Art",
+        "Gear",
+        "Kaya",
+        "Kayaba",
+        "Kirito",
+        "Klein",
+        "Nerve",
+        "NerveGear",
+        "Online",
+        "Sword"
+      ],
+      "estimated_prompt_tokens": 495,
+      "actual_prompt_tokens": 624,
+      "prompt_sha256": "dfb43f97c2071cef832a32af01dd4745b7ed9d10bfc0e6f7d03a8820806429fa"
+    },
+    {
+      "scene_id": "SC_0023",
+      "start": 1036.535,
+      "end": 1073.447,
+      "seconds": 0.973,
+      "output": {
+        "summary": "The tutorial ends with a farewell to players as the official launch of Sword Art Online is announced.",
+        "names_used": [
+          "Online",
+          "Sword"
+        ],
+        "tone": "calm",
+        "fight_described": false
+      },
+      "accepted": true,
+      "errors": [],
+      "warnings": [],
+      "names": [
+        "Art",
+        "Kayaba",
+        "Klein",
+        "NerveGear",
+        "Online",
+        "Sword"
+      ],
+      "estimated_prompt_tokens": 296,
+      "actual_prompt_tokens": 335,
+      "prompt_sha256": "74a09325f7672ceb69a971504986abee9e2b35b0567628cc63bbecfd0d103bd7"
+    },
+    {
+      "scene_id": "SC_0024",
+      "start": 1073.447,
+      "end": 1121.495,
+      "seconds": 1.162,
+      "output": {
+        "summary": "Akihiko Kaya creates a virtual world and designs the Nerve Gear rig, with others confirming his genius and the personal stakes of his fate.",
+        "names_used": [
+          "Kaya",
+          "Nerve",
+          "NerveGear"
+        ],
+        "tone": "calm",
+        "fight_described": false
+      },
+      "accepted": false,
+      "errors": [
+        "summary longer than 20 words"
+      ],
+      "warnings": [],
+      "names": [
+        "Gear",
+        "Kaya",
+        "Kayaba",
+        "Klein",
+        "Nerve",
+        "NerveGear"
+      ],
+      "estimated_prompt_tokens": 323,
+      "actual_prompt_tokens": 385,
+      "prompt_sha256": "45044a4c96236ffa944cb9b8f6e0b837c51b8ad72d11cd1e4e466e6bd8f232c4"
+    },
+    {
+      "scene_id": "SC_0025",
+      "start": 1121.495,
+      "end": 1140.514,
+      "seconds": 0.871,
+      "output": {
+        "summary": "Kain and others demand release, arguing about a game.",
+        "names_used": [
+          "Kain",
+          "NerveGear"
+        ],
+        "tone": "urgent",
+        "fight_described": false
+      },
+      "accepted": true,
+      "errors": [],
+      "warnings": [],
+      "names": [
+        "Kain",
+        "Kayaba",
+        "Klein",
+        "NerveGear"
+      ],
+      "estimated_prompt_tokens": 285,
+      "actual_prompt_tokens": 337,
+      "prompt_sha256": "a627a1a4d9983e43792567d222f6ba41c32a03adc31b5fb1a0dca94d51164c7d"
+    },
+    {
+      "scene_id": "SC_0026",
+      "start": 1140.514,
+      "end": 1195.194,
+      "seconds": 1.205,
+      "output": {
+        "summary": "Kayaba and Klein discuss heading to the next village to survive in an MMORPG, with Klein emphasizing the need for strength and caution.",
+        "names_used": [
+          "Kayaba",
+          "Klein",
+          "MMORPG"
+        ],
+        "tone": "tense",
+        "fight_described": false
+      },
+      "accepted": false,
+      "errors": [
+        "summary longer than 20 words"
+      ],
+      "warnings": [],
+      "names": [
+        "Kayaba",
+        "Klein",
+        "MMORPG",
+        "NerveGear",
+        "XP"
+      ],
+      "estimated_prompt_tokens": 485,
+      "actual_prompt_tokens": 563,
+      "prompt_sha256": "5c72e1b7d7a8ac25df2c776ed2d4ced38fa24e1e4a3a7282f0039073a55ffa5f"
+    },
+    {
+      "scene_id": "SC_0027",
+      "start": 1195.194,
+      "end": 1237.361,
+      "seconds": 0.97,
+      "output": {
+        "summary": "Kline offers to help, but warns of risks; someone says goodbye, and Kirito is mentioned.",
+        "names_used": [
+          "Kline",
+          "Kirito"
+        ],
+        "tone": "calm",
+        "fight_described": false
+      },
+      "accepted": false,
+      "errors": [
+        "names_used contains 'Kirito' which is not in the NAMES list"
+      ],
+      "warnings": [],
+      "names": [
+        "Kayaba",
+        "Klein",
+        "Kline",
+        "NerveGear"
+      ],
+      "estimated_prompt_tokens": 402,
+      "actual_prompt_tokens": 513,
+      "prompt_sha256": "e0d8c541fb8bb353b5aea95aed624a7437a42a80c2a560c73d0ebc70e6817d63"
+    },
+    {
+      "scene_id": "SC_0028",
+      "start": 1237.361,
+      "end": 1242.59,
+      "seconds": 0.773,
+      "output": {
+        "summary": "Kirito responds to someone with a greeting.",
+        "names_used": [
+          "Kirito"
+        ],
+        "tone": "calm",
+        "fight_described": false
+      },
+      "accepted": true,
+      "errors": [],
+      "warnings": [],
+      "names": [
+        "Kayaba",
+        "Kirito",
+        "Klein",
+        "NerveGear"
+      ],
+      "estimated_prompt_tokens": 248,
+      "actual_prompt_tokens": 283,
+      "prompt_sha256": "43480c3f77f9376739960ee47ed38d6ed6e695114e606e40400cc7de11eb36c9"
+    },
+    {
+      "scene_id": "SC_0029",
+      "start": 1242.59,
+      "end": 1273.522,
+      "seconds": 0.979,
+      "output": {
+        "summary": "A character compliments another on their appearance, noting it looks better than their avatar and that their scruff fits well.",
+        "names_used": [
+          "Kayaba",
+          "Klein"
+        ],
+        "tone": "funny",
+        "fight_described": false
+      },
+      "accepted": true,
+      "errors": [],
+      "warnings": [],
+      "names": [
+        "Kayaba",
+        "Klein",
+        "NerveGear"
+      ],
+      "estimated_prompt_tokens": 281,
+      "actual_prompt_tokens": 317,
+      "prompt_sha256": "18e5943ae094e5fc192652b6e943b4f4cbb329c93a4c5e8684b575f1422659da"
+    },
+    {
+      "scene_id": "SC_0030",
+      "start": 1273.522,
+      "end": 1297.421,
+      "seconds": 0.777,
+      "output": {
+        "summary": "A character declares, 'This world can't beat me!'",
+        "names_used": [
+          "Kayaba"
+        ],
+        "tone": "angry",
+        "fight_described": false
+      },
+      "accepted": true,
+      "errors": [],
+      "warnings": [],
+      "names": [
+        "Kayaba",
+        "Klein",
+        "NerveGear"
+      ],
+      "estimated_prompt_tokens": 254,
+      "actual_prompt_tokens": 290,
+      "prompt_sha256": "34cbe599b1bd5783b5f3c1010878d62bfeb237fc009fcb72f6d5e043e25a9cc6"
+    },
+    {
+      "scene_id": "SC_0031",
+      "start": 1297.421,
+      "end": 1306.013,
+      "seconds": 0.592,
+      "output": {
+        "summary": "A character says they will survive.",
+        "names_used": [
+          "Kayaba"
+        ],
+        "tone": "urgent",
+        "fight_described": false
+      },
+      "accepted": true,
+      "errors": [],
+      "warnings": [],
+      "names": [
+        "Kayaba",
+        "Klein",
+        "NerveGear"
+      ],
+      "estimated_prompt_tokens": 247,
+      "actual_prompt_tokens": 277,
+      "prompt_sha256": "cf6168147f670f0e606b27460365b8d535f401177862a6dfc88e591c82018b65"
+    },
+    {
+      "scene_id": "SC_0039",
+      "start": 1395.978,
+      "end": 1422.59,
+      "seconds": 0.56,
+      "output": {
+        "summary": "beater",
+        "names_used": [
+          "Kayaba"
+        ],
+        "tone": "unclear",
+        "fight_described": false
+      },
+      "accepted": true,
+      "errors": [],
+      "warnings": [],
+      "names": [
+        "Kayaba",
+        "Klein",
+        "NerveGear"
+      ],
+      "estimated_prompt_tokens": 245,
+      "actual_prompt_tokens": 277,
+      "prompt_sha256": "5d256567a8fc3b4da592ae49cdd835b8b77d3f749d4ba5f7862e8273d9ac1bfd"
+    }
+  ],
+  "skipped": [
+    {
+      "scene_id": "SC_0032",
+      "reason": "NOT_RUN_NO_DIALOGUE"
+    },
+    {
+      "scene_id": "SC_0033",
+      "reason": "NOT_RUN_NO_DIALOGUE"
+    },
+    {
+      "scene_id": "SC_0034",
+      "reason": "NOT_RUN_NO_DIALOGUE"
+    },
+    {
+      "scene_id": "SC_0035",
+      "reason": "NOT_RUN_NO_DIALOGUE"
+    },
+    {
+      "scene_id": "SC_0036",
+      "reason": "NOT_RUN_NO_DIALOGUE"
+    },
+    {
+      "scene_id": "SC_0037",
+      "reason": "NOT_RUN_NO_DIALOGUE"
+    },
+    {
+      "scene_id": "SC_0038",
+      "reason": "NOT_RUN_NO_DIALOGUE"
+    }
+  ],
+  "total_seconds": 44.365,
+  "initialization_seconds": 6.318,
+  "scene_latency_seconds": {
+    "min": 0.56,
+    "median": 0.9624999999999999,
+    "max": 2.199
+  },
+  "gpu": {
+    "peak_system_used_mib": 2754,
+    "scope": "System-wide dedicated VRAM, includes desktop/other applications; not per-process peak",
+    "samples": 87,
+    "baseline": {
+      "available": true,
+      "scope": "system",
+      "name": "NVIDIA GeForce RTX 3050 A Laptop GPU",
+      "used_mib": 1101,
+      "total_mib": 4094,
+      "gpu_percent": 22,
+      "encoder_percent": 0,
+      "decoder_percent": 8
+    },
+    "after": {
+      "available": true,
+      "scope": "system",
+      "name": "NVIDIA GeForce RTX 3050 A Laptop GPU",
+      "used_mib": 1021,
+      "total_mib": 4094,
+      "gpu_percent": 1,
+      "encoder_percent": 0,
+      "decoder_percent": 3
+    }
+  },
+  "thinking": {
+    "requested_disabled": true,
+    "server_reasoning_budget": 0,
+    "reasoning_response_present": false,
+    "think_tags_present": false
+  },
+  "allowed_list_diagnostics": [
+    {
+      "scene_id": "SC_0020",
+      "names_used": [
+        "Mere"
+      ],
+      "input_utterances": [
+        {
+          "id": "U_0243",
+          "text": "Mere?"
+        }
+      ],
+      "allowed_names": [
+        "Kayaba",
+        "Klein",
+        "NerveGear"
+      ]
+    },
+    {
+      "scene_id": "SC_0027",
+      "names_used": [
+        "Kline",
+        "Kirito"
+      ],
+      "input_utterances": [
+        {
+          "id": "U_0293",
+          "text": "If it were just Kline, but two more, or even one more."
+        },
+        {
+          "id": "U_0294",
+          "text": "Sorry."
+        },
+        {
+          "id": "U_0295",
+          "text": "Can't ask a guy just meant to risk his life for a bunch of strangers, can't I?"
+        },
+        {
+          "id": "U_0296",
+          "text": "So don't worry about me."
+        },
+        {
+          "id": "U_0297",
+          "text": "Get your ass to the next village."
+        },
+        {
+          "id": "U_0298",
+          "text": "I'll be fine."
+        },
+        {
+          "id": "U_0299",
+          "text": "Last game I played, I ran a guild, so I'm more than prepared."
+        },
+        {
+          "id": "U_0300",
+          "text": "And with all the stuff you taught me, I'll get by, no sweat."
+        },
+        {
+          "id": "U_0301",
+          "text": "Okay."
+        },
+        {
+          "id": "U_0302",
+          "text": "If that's what you want, I'll get going."
+        },
+        {
+          "id": "U_0303",
+          "text": "But if you're in a jam, message me, okay?"
+        },
+        {
+          "id": "U_0304",
+          "text": "Sure."
+        },
+        {
+          "id": "U_0305",
+          "text": "I'll be seeing you, Kline."
+        },
+        {
+          "id": "U_0306",
+          "text": "Take care."
+        },
+        {
+          "id": "U_0307",
+          "text": "Kirito!"
+        }
+      ],
+      "allowed_names": [
+        "Kayaba",
+        "Klein",
+        "Kline",
+        "NerveGear"
+      ]
+    }
+  ],
+  "vendor_manifest": "editorial-playbook-vendor.json",
+  "vendor_files_unchanged": 14,
+  "preserved_local_files_checked": 18,
+  "new_downloads": 0,
+  "model_retries": 0,
+  "tests": {
+    "baseline_passed": 293,
+    "full_passed": 326,
+    "subtests_passed": 9,
+    "failed": 0,
+    "skipped": 0,
+    "vendor_synthetic_passed": 28,
+    "adapter_passed": 5,
+    "full_seconds": 69.14
+  },
+  "limits": [
+    "Schema has no returned IDs or quotes: those accuracy metrics are not applicable here.",
+    "Rule checks cannot prove faithfulness or editorial quality.",
+    "Global glossary names can be allowed even when absent from a scene.",
+    "First-word name extraction omits source names; vendor assets were not altered."
+  ],
+  "raw_results": ".runtime/playbook/scene-benchmark/results.json",
+  "raw_results_sha256": "bff9ee0d672c0f25ce381abdd72b1bbed0c513fe0d4902a299385d19ed66ccf7"
+}

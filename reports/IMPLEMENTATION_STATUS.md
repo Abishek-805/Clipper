@@ -1,5 +1,14 @@
 # Clipper implementation status
 
+## Editorial playbook — Integrated, real scene gate failed (2026-11-14)
+
+- Branch `feature/personal-v1-playbook` from verified 3B remote `cda29330106004a69fa5610bba61436e37b8f40a`; integration commit `9649245`.
+- Copied all 14 supplied files unchanged under `clipper/playbook/`. The package is prompt/schema/validator material for the local model, not a host skill or fine-tune. Added a non-shadowing lazy adapter, schema-type checks, exact vendor provenance and a read-only preservation guard. Production startup, selector, renderer and confirmed reference data are unchanged.
+- Independently verified 28 supplied synthetic tests. Baseline **293 + 9 subtests**; full suite **326 passed + 9 subtests, 0 failed/skipped**; adapter tests 5/5; compilation/diff/guard checks pass. Vendor bytes and 18 source/cache/model/job/reference/raw-result files are hash-unchanged.
+- One offline text-only playbook run on the same 32 dialogue scenes: **24 accepted**, eight rejected; six word-limit violations, two NAMES-list failures, one overlapping attribution failure, zero relationship flags. Both omitted names occur in source but the supplied extractor misses first-word names. ID/quote accuracy is not applicable to this schema. These are rule checks, not factual/editorial acceptance.
+- **Gate failed (required ≥28/32 and zero attribution/relationship failures).** No nomination/selector, action-verification or hook activation. Modules for those jobs are vendored and synthetically tested only. No model/package download, retry, MCP server, rendering or full-media analysis. 44.365 s total; 2754 MiB peak system-wide GPU use; owned server stopped. Thinking disabled and no reasoning output observed.
+- [One-page report](editorial-playbook-report.md) · [Measured outputs and failures](editorial-playbook-evidence.json) · [Vendor provenance](editorial-playbook-vendor.json).
+
 ## Sprint 3B continuation — Reference review delivered; revised 2B gate failed (2026-11-14)
 
 - Same branch `feature/personal-v1-understanding-3b`, verified baseline `0921111677c788a9602a30e0c20df684ef2034b4`. A: `31b2e71`; B: `38a2a9e`; C implementation: `5359794110bb0d5aec963ccb739039ec9cdce808`, pushed and remote-verified.

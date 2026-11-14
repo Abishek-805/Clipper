@@ -99,3 +99,11 @@ Choose and inspect the source, select its audio, then expand **Owner reference m
 Reference JSON and small previews live under ignored `Shorts_Output/Review/<source-sha256>/`. Open the JSON link after saving to export your dataset. Preview timestamps are approximate source offsets, not frame-accuracy guarantees. Missing cached dialogue produces an explicit error. Source mismatches cannot reuse labels; changed text matches do not delete saved owner references. This workspace is separate from the blind Task 06I benchmark.
 
 `tests/ui-known-moments.cjs` supplements the existing browser regression script. Set `CLIPPER_REVIEW_SOURCE`, `CLIPPER_UI_URL` and `CLIPPER_PLAYWRIGHT_MODULE` against an isolated server/cache. It tests loading, hidden/visible preview states, playback and seeking; it never clicks Confirm, Reject or Save on real media.
+
+### Local model editorial playbook
+
+The user-supplied runtime rules, four task prompts, JSON schemas, validators and synthetic tests are preserved unchanged under `clipper/playbook/`. They are model prompt assets; no Codex skill installation, training or MCP tool calling is involved. `evaluation/playbook_adapter.py` loads them without replacing the existing `clipper.py` module and rejects malformed JSON shapes before custom validation.
+
+The opt-in `python -m evaluation.benchmark_text_scenes ... --playbook` mode uses the existing explicit `--units`, `--runtime`, `--model` and `--output` arguments. It stays offline, disables thinking, runs one model at a time, records raw results and stops at the acceptance gate. `--playbook` and `--revised` are separate, mutually exclusive experiments. No model starts during application launch or file selection.
+
+The measured playbook result was **24/32 accepted, gate failed**. No nomination, action or hook production feature is enabled. See [results and limitations](reports/editorial-playbook-report.md). To verify preservation: `.venv\Scripts\python.exe tools\guard_playbook.py --baseline cda29330106004a69fa5610bba61436e37b8f40a`. The local task's optional `--integrity .runtime/playbook/preserved.json` additionally checks recorded source/cache/model/job hashes.
