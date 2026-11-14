@@ -1,0 +1,2 @@
+# Preserve the exact supplied playbook bytes across Windows checkouts.
+clipper/playbook/** -text

@@ -1,0 +1,11 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["verdict", "evidence", "confidence", "ends_cleanly"],
+  "properties": {
+    "verdict": {"type": "string", "enum": ["CONFIRM", "REJECT", "UNCLEAR"]},
+    "evidence": {"type": "array", "maxItems": 4, "items": {"type": "string", "maxLength": 100}},
+    "confidence": {"type": "string", "enum": ["low", "medium", "high"]},
+    "ends_cleanly": {"type": "string", "enum": ["true", "false", "unclear"]}
+  }
+}

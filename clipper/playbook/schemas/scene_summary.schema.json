@@ -1,0 +1,11 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["summary", "names_used", "tone", "fight_described"],
+  "properties": {
+    "summary": {"type": "string", "maxLength": 200},
+    "names_used": {"type": "array", "items": {"type": "string"}, "maxItems": 8},
+    "tone": {"type": "string", "enum": ["calm", "tense", "urgent", "sad", "happy", "funny", "angry", "explanatory", "unclear"]},
+    "fight_described": {"type": "boolean"}
+  }
+}

@@ -1,0 +1,35 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["nominations"],
+  "properties": {
+    "nominations": {
+      "type": "array",
+      "maxItems": 3,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["type", "start_utterance_id", "end_utterance_id", "scene_ids", "quotes", "reason", "standalone"],
+        "properties": {
+          "type": {"type": "string", "enum": ["plot_reveal", "memorable_line", "emotional", "comedy", "confrontation", "fight"]},
+          "start_utterance_id": {"type": "string", "pattern": "^U_[0-9]{4}$"},
+          "end_utterance_id": {"type": "string", "pattern": "^U_[0-9]{4}$"},
+          "scene_ids": {"type": "array", "minItems": 1, "maxItems": 4, "items": {"type": "string", "pattern": "^SC_[0-9]{4}$"}},
+          "quotes": {
+            "type": "array", "minItems": 1, "maxItems": 3,
+            "items": {
+              "type": "object", "additionalProperties": false,
+              "required": ["utterance_id", "text"],
+              "properties": {
+                "utterance_id": {"type": "string", "pattern": "^U_[0-9]{4}$"},
+                "text": {"type": "string", "maxLength": 240}
+              }
+            }
+          },
+          "reason": {"type": "string", "maxLength": 260},
+          "standalone": {"type": "boolean"}
+        }
+      }
+    }
+  }
+}

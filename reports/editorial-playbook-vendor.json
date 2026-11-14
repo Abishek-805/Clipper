@@ -1,0 +1,20 @@
+{
+  "source": "User-supplied files.zip / clipper-editorial-playbook.zip",
+  "inner_zip_sha256": "722aadd36ab3a06d95461dbab479d78b93f1a070e4297e83ea4f9eb27921c268",
+  "files": {
+    "clipper/playbook/INTEGRATION.md": "ccccd66204fa57f707bdd6930de8af8aa51e42584c4d7eea2979777527cc7df8",
+    "clipper/playbook/SKILL.md": "a4850307e399ad35820023355ae5eb603a434638e40c9b66c19171db8674806b",
+    "clipper/playbook/modules/action_verify.md": "97eba6af1f29266f2d038f0a1049127430a0ef69d039da2ec3394b779d7be9cc",
+    "clipper/playbook/modules/common_rules.md": "a9e8ac6fcb68703a086babbe9135e81c3e8ec7949026227a9f7f3d135fdc098d",
+    "clipper/playbook/modules/hook_context.md": "b351c1ade3c4137069057f034ae119c5b1a6c279846ff24fecc33870bb56a727",
+    "clipper/playbook/modules/nominate_moments.md": "126b6c3c2300a67c502bd7f7731cd3f0b72ff72609dfeac98f3f5636e9c0a6b8",
+    "clipper/playbook/modules/scene_summary.md": "89026eb98b8d0edf607580f97bad0a1498b7715cd15b289a6cf9f550ab8fa021",
+    "clipper/playbook/references/dos_and_donts.md": "69bedf8886c10d9c982c45ac52a4d053a6613c61686d3433c87f5f22babdcfa0",
+    "clipper/playbook/schemas/action_verdict.schema.json": "195f72a7665afcf5a36ea560fbac0f7341dbd3f0afd3e84ea6e8223d65935056",
+    "clipper/playbook/schemas/hook_context.schema.json": "3b51c330964acf67f1e5f3666574e99c22545ddabd58b26d50ba0f18f427d6e2",
+    "clipper/playbook/schemas/nominations.schema.json": "037ebf1d5505a9e67ac61a751918edd96e1b40c0634b0f1bd2eca1e0288f2db8",
+    "clipper/playbook/schemas/scene_summary.schema.json": "6dbeac6663ffddc2f265e5d2297c7dd80b669f5ff44c8efde6b1b65a3ff442e5",
+    "clipper/playbook/scripts/playbook.py": "761e0080a34fdea4a71610a47969dac4828c36d5597accab031762f16127f698",
+    "clipper/playbook/tests/test_playbook.py": "ff7e01e7a54d8d37d8672b6865f7a746918702d38ab191ef3196bed72be7f926"
+  }
+}

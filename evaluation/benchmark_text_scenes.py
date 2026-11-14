@@ -14,7 +14,7 @@ from urllib.error import URLError
 from urllib.request import ProxyHandler, build_opener
 
 from diagnostics import gpu_activity
-from evaluation.text_scenes import VERSION, audit_response, benchmark_metrics, request_scene, scene_lines
+from evaluation.text_scenes import VERSION, audit_response, benchmark_metrics, request_scene, request_json, scene_lines
 from evaluation.literal_evidence import audit_literal_response, name_list, violation_metrics
 from glossary import load_glossary
 from structure import write_json
@@ -50,9 +50,9 @@ def run(args):
     command = [str(runtime), "--model", str(model), "--offline", "--no-mmproj", "--no-webui",
                "--host", "127.0.0.1", "--port", str(args.port), "--ctx-size", "4096", "--parallel", "1",
                "--n-gpu-layers", "99", "--threads", "6"]
-    if args.revised:
+    if args.revised or args.playbook:
         command += ["--reasoning-budget", "0", "--chat-template-kwargs", '{"enable_thinking":false}']
-    glossary = load_glossary() if args.revised else []
+    glossary = load_glossary() if args.revised or args.playbook else []
     samples, abort, stop = [], threading.Event(), threading.Event()
     baseline_gpu = gpu_activity()
     rows = []
@@ -66,6 +66,9 @@ def run(args):
     if args.revised:
         result.update(version="scene-text-revised-v2", glossary=glossary,
                       gate_rule="At least 28/32 responses pass all checks; zero attribution/relationship violations; nominations only")
+    if args.playbook:
+        result.update(version="editorial-playbook-scene-v1", glossary=glossary,
+                      gate_rule="At least 28/32 accepted by supplied scene_summary validator; zero attribution/relationship violations")
     def monitor():
         while not stop.is_set():
             samples.append(gpu_activity())
@@ -110,13 +113,23 @@ def run(args):
                         row["status"] = "NOT_RUN_NO_DIALOGUE"
                     else:
                         request_started = time.perf_counter()
-                        names = name_list(lines, glossary) if args.revised else []
-                        raw, usage, timings = request_scene(endpoint + "/v1/chat/completions", model.name, scene, lines,
-                                                           revised=args.revised, allowed_names=names)
+                        prompt = None
+                        if args.playbook:
+                            from evaluation.playbook_adapter import scene_prompt, playbook, audit_scene
+                            prompt, context = scene_prompt(scene, lines, glossary)
+                            raw, usage, timings = request_json(endpoint + "/v1/chat/completions", model.name, prompt,
+                                                              playbook.schema("scene_summary"))
+                            audit = audit_scene(raw, context)
+                            row.update(prompt=prompt, prompt_sha256=hashlib.sha256(prompt.encode()).hexdigest(),
+                                       estimated_prompt_tokens=playbook.estimate_tokens(prompt), context=context)
+                        else:
+                            names = name_list(lines, glossary) if args.revised else []
+                            raw, usage, timings = request_scene(endpoint + "/v1/chat/completions", model.name, scene, lines,
+                                                               revised=args.revised, allowed_names=names)
+                            audit = audit_literal_response(raw, scene, lines, names, revised=True) if args.revised else audit_response(raw, scene, lines)
                         row.update(status="executed", seconds=round(time.perf_counter()-request_started, 3),
                                    raw_response=raw, usage=usage, server_timings=timings,
-                                   audit=audit_literal_response(raw, scene, lines, names, revised=True)
-                                   if args.revised else audit_response(raw, scene, lines))
+                                   audit=audit)
                         if args.revised:
                             row["provided_name_list"] = names
                         print(f"{scene['id']}: {row['seconds']}s; {row['audit']['errors'] or 'literal checks passed'}", flush=True)
@@ -142,7 +155,7 @@ def run(args):
                       peak_system_gpu_used_mib=max((s.get("used_mib", 0) for s in samples if s.get("available")), default=None),
                       gpu_measurement_scope="System-wide dedicated VRAM, includes desktop/other applications; not per-process peak",
                       gpu_samples=len(samples), after_gpu=gpu_activity())
-        if args.revised:
+        if args.revised or args.playbook:
             result["metrics"].update(violation_metrics(rows))
             metrics = result["metrics"]
             result["gate_passed"] = (result["status"] == "completed" and metrics["executed"] == 32
@@ -160,7 +173,9 @@ def main():
     parser.add_argument("--model", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--port", type=int, default=8778)
-    parser.add_argument("--revised", action="store_true", help="Run the continuation's constrained 20-word contract")
+    contract = parser.add_mutually_exclusive_group()
+    contract.add_argument("--revised", action="store_true", help="Run the continuation's constrained 20-word contract")
+    contract.add_argument("--playbook", action="store_true", help="Use the supplied editorial playbook unchanged")
     parser.add_argument("--clipper-status", action="append", default=["http://127.0.0.1:8765/api/status", "http://127.0.0.1:8770/api/status"])
     raise SystemExit(run(parser.parse_args()))
 

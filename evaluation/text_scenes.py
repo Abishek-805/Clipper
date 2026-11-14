@@ -97,6 +97,13 @@ def request_scene(endpoint, model, scene, lines, timeout=90, revised=False, allo
                   "no recommendations, no extra fields. Short and cautious is better than speculation.\n" +
                   json.dumps({"scene_id": scene["id"], "name_list": list(allowed_names), "tone_list": TONES,
                               "utterances": [{"id": u["id"], "text": u["text"]} for u in lines]}, ensure_ascii=False))
+    return request_json(endpoint, model, prompt, schema, timeout)
+
+
+def request_json(endpoint, model, prompt, schema, timeout=90):
+    endpoint = local_endpoint(endpoint)
+    if not endpoint:
+        raise ValueError("An explicit loopback endpoint is required")
     body = dict(model=model, messages=[dict(role="user", content=prompt)], temperature=0, max_tokens=512,
                 chat_template_kwargs={"enable_thinking": False}, response_format={"type": "json_schema",
                     "json_schema": {"name": "text_scene", "strict": True, "schema": schema}})
