@@ -1,5 +1,15 @@
 # Clipper implementation status
 
+## Sprint 3A — Structure exclusions and dialogue source (2026-11-14)
+
+- Delivered on `feature/personal-v1-understanding`, based on verified daily-ready remote `298f70a9e970d2744d0ef1243f363c21dd08739f`; implementation `5c903f1eead6bb7f11e93fe42bb0218de70f9207` pushed and remote-verified.
+- Evidence-backed HARD/VERIFIED exclusions, SOFT warnings/lower priority, persistent add/edit/suppress overrides, legacy reproduction switch, and browser zone/source reports. Manual intervals remain available.
+- ASS/SRT assessment retains cue timing, refuses ambiguous English sources, and defaults to Whisper captions. Optional release captions use saved cue artifacts for trim-only edits. Existing transcription/visual cache fingerprints are unchanged.
+- Deterministic source/audio/dialogue-keyed structural units: S01-E01 copied-cache measurement produced 39 scenes, 315 utterances and 388 shots; no semantic interpretation is implied.
+- Baseline **246 passed + 9 subtests**; final **267 passed + 9 subtests, 0 failed, 0 skipped**. Focused Sprint 3A tests: **21 passed**. Playwright: **14 checks**, no page/console errors or processing requests. Compilation/diff checks passed.
+- Real metadata and copied-cache selector comparison completed; original caches hash-unchanged. No full-episode analysis/rendering, model inference/downloads, invented human annotations, or Sprint 3B work. Editorial quality remains unaccepted.
+- [One-page report](understanding-3a-report.md) · [Machine-readable evidence](understanding-3a-evidence.json).
+
 ## Completed
 
 ### Task 01 — End-to-end reliability and Windows verification

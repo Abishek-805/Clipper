@@ -79,3 +79,9 @@ New visual analysis prefers a single **NVDEC decode + CUDA resize** pass. PyScen
 The status area shows actual stage/device messages and system-wide GPU memory, decode and encode utilization. Those counters include other applications; job manifests separately record device provenance. Cached analysis/transcripts are labeled as reused and do not run inference again. In Task Manager, inspect NVIDIA **Video Decode / Video Encode / CUDA** engines rather than only the default 3D graph. Unsupported GPU decoding falls back explicitly with the reason in Processing details. `CLIPPER_VISUAL_DEVICE=cpu` is available for diagnostics.
 
 This visual-engine update refreshes old visual-analysis caches once; transcription caches remain independent. The sampled detector may shift scene boundaries slightly, so review clips as usual.
+
+### Episode exclusions and subtitle sources (Sprint 3A)
+
+After inspecting a video, open **Episode exclusions → Inspect selected episode**. Explicit structural chapters and independently supported ASS song styles can exclude automatic candidates; position-only warnings lower priority without proving a song. The legacy filter switch reproduces unfiltered selection. Advanced JSON overrides support adding manual zones, editing detected zones and suppressing detected IDs; remove manual add records to remove manual zones. Changes affect future runs. New jobs save raw detection and applied overrides in `structure.json`; existing exports remain unchanged.
+
+Whisper remains the default for captions. **Use release subtitles for captions** requires a unique reliable English dialogue track; conflicting language metadata or multiple plausible tracks produces a clear error. Source cue timing is retained rather than inventing word alignment. Track assessment and scene/utterance/shot IDs prepare later work; they do not establish plot understanding or editorial quality. See [Sprint 3A results](reports/understanding-3a-report.md).

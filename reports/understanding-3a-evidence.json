@@ -1,0 +1,498 @@
+{
+  "baseline_commit": "298f70a9e970d2744d0ef1243f363c21dd08739f",
+  "branch": "feature/personal-v1-understanding",
+  "source": "[S01-E01] Sword Art Online [1080p] [Dual] @Anime_x_Clan.mkv",
+  "source_hash": "28982060e5dcf4e743c7448859f1319b1726338d91c387f0bac15277360c0476",
+  "duration": 1422.59,
+  "structure_version": "episode-structure-v2",
+  "chapters": [
+    {
+      "id": 2341975172,
+      "time_base": "1/1000000000",
+      "start": 0,
+      "start_time": "0.000000",
+      "end": 146021000000,
+      "end_time": "146.021000",
+      "tags": {
+        "title": "Intro"
+      }
+    },
+    {
+      "id": 2084495271,
+      "time_base": "1/1000000000",
+      "start": 146021000000,
+      "start_time": "146.021000",
+      "end": 662996000000,
+      "end_time": "662.996000",
+      "tags": {
+        "title": "Part A"
+      }
+    },
+    {
+      "id": 1534384581,
+      "time_base": "1/1000000000",
+      "start": 662996000000,
+      "start_time": "662.996000",
+      "end": 1306013000000,
+      "end_time": "1306.013000",
+      "tags": {
+        "title": "Part B"
+      }
+    },
+    {
+      "id": 1,
+      "time_base": "1/1000000000",
+      "start": 1306013000000,
+      "start_time": "1306.013000",
+      "end": 1395978000000,
+      "end_time": "1395.978000",
+      "tags": {
+        "title": "ED"
+      }
+    },
+    {
+      "id": 3033980993,
+      "time_base": "1/1000000000",
+      "start": 1395978000000,
+      "start_time": "1395.978000",
+      "end": 1414997000000,
+      "end_time": "1414.997000",
+      "tags": {
+        "title": "Part C"
+      }
+    },
+    {
+      "id": 2044059665,
+      "time_base": "1/1000000000",
+      "start": 1414997000000,
+      "start_time": "1414.997000",
+      "end": 1422590000000,
+      "end_time": "1422.590000",
+      "tags": {
+        "title": "Next Time"
+      }
+    }
+  ],
+  "tracks": [
+    {
+      "index": 3,
+      "codec": "ass",
+      "language": "eng",
+      "title": "Anime Clan",
+      "default": true,
+      "forced": false,
+      "style_counts": {
+        "Signs": 49,
+        "title": 54,
+        "Prev2": 64,
+        "msg": 81,
+        "text1": 12,
+        "eol": 1,
+        "char-menu": 2,
+        "news": 2,
+        "news2": 2,
+        "Opening-English-L0": 12,
+        "Opening-Romaji-L1": 2142,
+        "Opening-Kanji-L1": 780,
+        "Opening-English-L1": 12,
+        "prev": 20
+      }
+    },
+    {
+      "index": 4,
+      "codec": "ass",
+      "language": "jpn",
+      "title": "Anime Clan",
+      "default": false,
+      "forced": false,
+      "style_counts": {
+        "Signs": 49,
+        "title": 54,
+        "Prev2": 64,
+        "msg": 81,
+        "Default": 323,
+        "Alternative": 3,
+        "text1": 12,
+        "eol": 1,
+        "char-menu": 2,
+        "news": 2,
+        "news2": 2,
+        "Opening-English-L0": 12,
+        "Opening-Romaji-L1": 2142,
+        "Opening-Kanji-L1": 780,
+        "Opening-English-L1": 12,
+        "prev": 20
+      }
+    },
+    {
+      "index": 5,
+      "codec": "ass",
+      "language": "eng",
+      "title": "Anime Clan",
+      "default": false,
+      "forced": false,
+      "style_counts": {
+        "SAO1": 0,
+        "SAO2": 0,
+        "Signs": 68,
+        "Title": 0,
+        "Prev1": 31,
+        "Prev2": 129,
+        "SAO-rom": 13,
+        "SAO-eng": 11,
+        "msg": 81
+      }
+    },
+    {
+      "index": 6,
+      "codec": "ass",
+      "language": "jpn",
+      "title": "Anime Clan",
+      "default": false,
+      "forced": false,
+      "style_counts": {
+        "SAO1": 321,
+        "SAO2": 1,
+        "Signs": 68,
+        "Title": 0,
+        "Prev1": 31,
+        "Prev2": 129,
+        "SAO-rom": 13,
+        "SAO-eng": 11,
+        "msg": 81
+      }
+    }
+  ],
+  "zones": [
+    {
+      "id": "Z_1ae40f20b665",
+      "start": 0.0,
+      "end": 240.0,
+      "label": "OP",
+      "level": "SOFT",
+      "source": "position",
+      "evidence": [
+        "Early episode prior; not proof of an opening"
+      ],
+      "reason": "Early episode prior; not proof of an opening"
+    },
+    {
+      "id": "Z_60e345d19321",
+      "start": 1242.59,
+      "end": 1422.59,
+      "label": "ED",
+      "level": "SOFT",
+      "source": "position",
+      "evidence": [
+        "Late episode prior; story remains eligible"
+      ],
+      "reason": "Late episode prior; story remains eligible"
+    },
+    {
+      "id": "Z_c5085448466d",
+      "start": 1306.013,
+      "end": 1395.978,
+      "label": "ED",
+      "level": "HARD",
+      "source": "chapter",
+      "evidence": [
+        "Explicit chapter: ED"
+      ],
+      "reason": "Explicit chapter: ED"
+    },
+    {
+      "id": "Z_1eeaa980c356",
+      "start": 1316.86,
+      "end": 1383.39,
+      "label": "OP",
+      "level": "VERIFIED",
+      "source": "subtitle:3:Opening-Kanji-L1",
+      "evidence": [
+        "Style: Opening-Kanji-L1",
+        "Style run contained in an explicit structural chapter"
+      ],
+      "reason": "Style: Opening-Kanji-L1; Style run contained in an explicit structural chapter"
+    },
+    {
+      "id": "Z_5c61ddf13646",
+      "start": 1316.86,
+      "end": 1383.39,
+      "label": "OP",
+      "level": "VERIFIED",
+      "source": "subtitle:4:Opening-Kanji-L1",
+      "evidence": [
+        "Style: Opening-Kanji-L1",
+        "Style run contained in an explicit structural chapter"
+      ],
+      "reason": "Style: Opening-Kanji-L1; Style run contained in an explicit structural chapter"
+    },
+    {
+      "id": "Z_b9ec33123b7d",
+      "start": 1316.86,
+      "end": 1392.85,
+      "label": "OP",
+      "level": "VERIFIED",
+      "source": "subtitle:4:Opening-Romaji-L1",
+      "evidence": [
+        "Style: Opening-Romaji-L1",
+        "Style run contained in an explicit structural chapter"
+      ],
+      "reason": "Style: Opening-Romaji-L1; Style run contained in an explicit structural chapter"
+    },
+    {
+      "id": "Z_dfae64e1f685",
+      "start": 1316.86,
+      "end": 1392.85,
+      "label": "OP",
+      "level": "VERIFIED",
+      "source": "subtitle:3:Opening-Romaji-L1",
+      "evidence": [
+        "Style: Opening-Romaji-L1",
+        "Style run contained in an explicit structural chapter"
+      ],
+      "reason": "Style: Opening-Romaji-L1; Style run contained in an explicit structural chapter"
+    },
+    {
+      "id": "Z_635123f2cc2e",
+      "start": 1317.17,
+      "end": 1382.95,
+      "label": "OP",
+      "level": "VERIFIED",
+      "source": "subtitle:4:Opening-English-L1",
+      "evidence": [
+        "Style: Opening-English-L1",
+        "Style run contained in an explicit structural chapter"
+      ],
+      "reason": "Style: Opening-English-L1; Style run contained in an explicit structural chapter"
+    },
+    {
+      "id": "Z_b74968194fed",
+      "start": 1317.17,
+      "end": 1382.95,
+      "label": "OP",
+      "level": "VERIFIED",
+      "source": "subtitle:3:Opening-English-L0",
+      "evidence": [
+        "Style: Opening-English-L0",
+        "Style run contained in an explicit structural chapter"
+      ],
+      "reason": "Style: Opening-English-L0; Style run contained in an explicit structural chapter"
+    },
+    {
+      "id": "Z_cc3790bed6a9",
+      "start": 1317.17,
+      "end": 1382.95,
+      "label": "OP",
+      "level": "VERIFIED",
+      "source": "subtitle:3:Opening-English-L1",
+      "evidence": [
+        "Style: Opening-English-L1",
+        "Style run contained in an explicit structural chapter"
+      ],
+      "reason": "Style: Opening-English-L1; Style run contained in an explicit structural chapter"
+    },
+    {
+      "id": "Z_fe21d747109b",
+      "start": 1317.17,
+      "end": 1382.95,
+      "label": "OP",
+      "level": "VERIFIED",
+      "source": "subtitle:4:Opening-English-L0",
+      "evidence": [
+        "Style: Opening-English-L0",
+        "Style run contained in an explicit structural chapter"
+      ],
+      "reason": "Style: Opening-English-L0; Style run contained in an explicit structural chapter"
+    }
+  ],
+  "zone_counts": {
+    "SOFT": 2,
+    "HARD": 1,
+    "VERIFIED": 8
+  },
+  "selection": {
+    "False": {
+      "seconds": 1.517,
+      "candidate_count": 1814,
+      "selected": [
+        {
+          "start": 237.27,
+          "end": 276.68,
+          "score": 0.7807,
+          "zone_warnings": []
+        },
+        {
+          "start": 1092.341,
+          "end": 1137.67,
+          "score": 0.8108,
+          "zone_warnings": []
+        }
+      ],
+      "structure_rejection_count": 0
+    },
+    "True": {
+      "seconds": 1.702,
+      "candidate_count": 1814,
+      "selected": [
+        {
+          "start": 637.82,
+          "end": 683.308,
+          "score": 0.773,
+          "zone_warnings": []
+        },
+        {
+          "start": 1092.341,
+          "end": 1137.67,
+          "score": 0.8108,
+          "zone_warnings": []
+        }
+      ],
+      "structure_rejection_count": 186
+    }
+  },
+  "existing_drafts": [
+    {
+      "start": 237.27,
+      "end": 276.68,
+      "zone_check": [
+        [],
+        [
+          {
+            "id": "Z_1ae40f20b665",
+            "level": "SOFT",
+            "label": "OP",
+            "overlap_fraction": 0.069272,
+            "reason": "Early episode prior; not proof of an opening"
+          }
+        ]
+      ]
+    },
+    {
+      "start": 1092.341,
+      "end": 1137.67,
+      "zone_check": [
+        [],
+        []
+      ]
+    }
+  ],
+  "units": {
+    "inspection_seconds": 3.481,
+    "unit_seconds": 0.212,
+    "source_hash": "28982060e5dcf4e743c7448859f1319b1726338d91c387f0bac15277360c0476",
+    "dialogue_source": "cached Whisper words",
+    "stream_index": null,
+    "tracks": [
+      {
+        "index": 3,
+        "language": "eng",
+        "title": "Anime Clan",
+        "codec": "ass",
+        "default": true,
+        "forced": false,
+        "classification": "signs/songs",
+        "reason": "Predominantly signs/songs; fewer than 20 dialogue cues remain",
+        "dialogue_cue_count": 1,
+        "style_counts": {
+          "Signs": 49,
+          "eol": 1,
+          "msg": 81,
+          "title": 54,
+          "text1": 12,
+          "news": 2,
+          "news2": 2,
+          "char-menu": 2,
+          "Opening-Kanji-L1": 780,
+          "Opening-Romaji-L1": 2142,
+          "Opening-English-L0": 12,
+          "Opening-English-L1": 12,
+          "prev": 20,
+          "Prev2": 64
+        }
+      },
+      {
+        "index": 4,
+        "language": "jpn",
+        "title": "Anime Clan",
+        "codec": "ass",
+        "default": false,
+        "forced": false,
+        "classification": "unknown",
+        "reason": "Dialogue-like content, but language metadata is absent/conflicting; explicit review required",
+        "dialogue_cue_count": 327,
+        "style_counts": {
+          "Signs": 49,
+          "Default": 323,
+          "eol": 1,
+          "msg": 81,
+          "Alternative": 3,
+          "title": 54,
+          "text1": 12,
+          "news": 2,
+          "news2": 2,
+          "char-menu": 2,
+          "Opening-Kanji-L1": 780,
+          "Opening-Romaji-L1": 2142,
+          "Opening-English-L0": 12,
+          "Opening-English-L1": 12,
+          "Prev2": 64,
+          "prev": 20
+        }
+      },
+      {
+        "index": 5,
+        "language": "eng",
+        "title": "Anime Clan",
+        "codec": "ass",
+        "default": false,
+        "forced": false,
+        "classification": "signs/songs",
+        "reason": "Predominantly signs/songs; fewer than 20 dialogue cues remain",
+        "dialogue_cue_count": 0,
+        "style_counts": {
+          "Signs": 68,
+          "msg": 81,
+          "Prev2": 129,
+          "SAO-rom": 13,
+          "SAO-eng": 11,
+          "Prev1": 31
+        }
+      },
+      {
+        "index": 6,
+        "language": "jpn",
+        "title": "Anime Clan",
+        "codec": "ass",
+        "default": false,
+        "forced": false,
+        "classification": "unknown",
+        "reason": "Dialogue-like content, but language metadata is absent/conflicting; explicit review required",
+        "dialogue_cue_count": 322,
+        "style_counts": {
+          "Signs": 68,
+          "SAO1": 321,
+          "msg": 81,
+          "SAO2": 1,
+          "Prev2": 129,
+          "SAO-rom": 13,
+          "SAO-eng": 11,
+          "Prev1": 31
+        }
+      }
+    ],
+    "scenes": 39,
+    "utterances": 315,
+    "shots": 388,
+    "stable_artifact_reused": true
+  },
+  "protected_caches": {
+    "transcription.json": {
+      "sha256": "3bbf6615113ec4842fc93013b85b5531e986c33b7647406117aba2cf18ebec19",
+      "unchanged_from_copy": true
+    },
+    "analysis_cache.json": {
+      "sha256": "4203e5561c89368497226200b3fd6e2ce726892d3e32bb1e4c22f8fcfad06175",
+      "unchanged_from_copy": true
+    }
+  }
+}
