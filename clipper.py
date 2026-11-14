@@ -27,7 +27,7 @@ from model_manager import ModelManager
 from vision import (VisionModelManager, extract_candidate_frames, read_semantic_cache,
                     semantic_cache_key, write_semantic_cache)
 from gpu_analysis import visual_signals as _gpu_visual_signals
-from structure import prepare_structure, zone_check
+from structure import VERSION as STRUCTURE_VERSION, prepare_structure, zone_check
 from dialogue import choose_dialogue, release_cues, clipped_cues, build_units, save_units
 
 VIDEO_EXTENSIONS = {".mp4", ".mkv", ".mov", ".avi", ".webm", ".m4v"}
@@ -1538,14 +1538,18 @@ def process_video(path: Path, output_root: Path, model_size: str, clip_count: in
                 "caption_placement": os.getenv("CLIPPER_CAPTION_PLACEMENT", "auto"),
                 "audio_stream_index": audio_index, "caption_source": caption_source,
                 "transcription_task": transcription_task, "subtitle_stream_index": subtitle_index,
-                "structure_filter_enabled": structure_filter_enabled, "structure_version": "episode-structure-v1"}
+                "structure_filter_enabled": structure_filter_enabled, "structure_version": STRUCTURE_VERSION}
     progress("Structure inspection · chapters and embedded subtitle evidence; no AI")
     try:
         structure = prepare_structure(path, cache_folder, folder)
-    except (subprocess.CalledProcessError, OSError) as exc:
+    except (subprocess.SubprocessError, OSError) as exc:
         structure = {"active": [], "detected": [], "status": "unavailable", "reason": str(exc)}
         progress(f"Structure inspection unavailable; unknown regions stay eligible: {exc}")
     settings["zone_overrides"] = structure.get("overrides", [])
+    structure["filter_enabled"] = structure_filter_enabled
+    _write_manifest(folder / "structure.json", structure)
+    if caption_source == "Release subtitles":
+        release_cues(structure)  # Fail before decoding if no trustworthy caption track exists.
     existing_manifest = {}
     if manifest_path.exists():
         try:

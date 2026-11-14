@@ -12,7 +12,7 @@ import tempfile
 
 from diagnostics import ffmpeg_path, ffprobe_path
 
-VERSION = "episode-structure-v1"
+VERSION = "episode-structure-v2"
 LABELS = {"op": "OP", "opening": "OP", "ed": "ED", "ending": "ED",
           "credits": "credits", "preview": "preview", "next episode": "preview",
           "recap": "recap", "song": "song", "karaoke": "song"}
@@ -79,7 +79,10 @@ def detect_zones(chapters, tracks, duration):
         title = chapter.get("tags", {}).get("title", "")
         name = label(title)
         if name and name != "song":
-            zones.append(_zone(float(chapter["start_time"]), float(chapter["end_time"]), name,
+            start, end = float(chapter["start_time"]), float(chapter["end_time"])
+            if not (math.isfinite(start) and math.isfinite(end) and 0 <= start < end <= duration):
+                continue
+            zones.append(_zone(start, end, name,
                                "HARD", "chapter", ["Explicit chapter: " + title]))
     for track in tracks:
         groups = {}
@@ -100,8 +103,9 @@ def detect_zones(chapters, tracks, duration):
                     support.append("ASS karaoke timing tags")
                 if sum("♪" in c["raw"] or "♫" in c["raw"] for c in run) >= 3:
                     support.append("At least three timed musical-note lyric lines")
-                if any(z["level"] == "HARD" and z["start"] < end and z["end"] > start for z in zones):
-                    support.append("Overlapping explicit structural chapter")
+                # A brief chapter overlap cannot verify an otherwise unsupported long style run.
+                if any(z["level"] == "HARD" and z["start"] <= start and z["end"] >= end for z in zones):
+                    support.append("Style run contained in an explicit structural chapter")
                 zones.append(_zone(start, end, name, "VERIFIED" if support else "SOFT",
                                    f"subtitle:{track['index']}:{style}",
                                    ["Style: " + style] + (support or ["Style name alone; unverified"])))
@@ -157,7 +161,7 @@ def zone_check(candidate, zones):
 def inspect_source(path):
     metadata = json.loads(subprocess.run([ffprobe_path(), "-v", "error", "-show_streams", "-show_chapters",
                                          "-show_format", "-of", "json", str(path)], capture_output=True,
-                                        text=True, encoding="utf-8", check=True).stdout)
+                                        text=True, encoding="utf-8", check=True, timeout=30).stdout)
     tracks = []
     with tempfile.TemporaryDirectory(prefix="clipper-subtitles-") as tmp:
         for stream in metadata.get("streams", []):
@@ -172,10 +176,10 @@ def inspect_source(path):
                 ass = track["codec"] in ("ass", "ssa")
                 target = Path(tmp) / (str(stream["index"]) + (".ass" if ass else ".srt"))
                 subprocess.run([ffmpeg_path(), "-v", "error", "-i", str(path), "-map", f"0:{stream['index']}",
-                                "-c:s", "ass" if ass else "srt", str(target)], capture_output=True, check=True)
+                                "-c:s", "ass" if ass else "srt", str(target)], capture_output=True, check=True, timeout=60)
                 track["cues"], track["styles"] = parse_subtitles(target.read_text(encoding="utf-8-sig"), ass)
                 track["style_counts"] = dict(Counter(c["style"] for c in track["cues"]))
-            except (subprocess.CalledProcessError, ValueError, OSError) as exc:
+            except (subprocess.SubprocessError, ValueError, OSError) as exc:
                 track["error"] = str(exc)
             tracks.append(track)
     duration = float(metadata["format"]["duration"])
@@ -203,7 +207,7 @@ def prepare_structure(path, cache_folder, job_folder=None):
         for block in iter(lambda: handle.read(1024 * 1024), b""):
             digest.update(block)
     source_hash = digest.hexdigest()
-    artifact = Path(cache_folder) / f"structure-{source_hash[:20]}.json"
+    artifact = Path(cache_folder) / f"{VERSION}-{source_hash[:20]}.json"
     try:
         data = json.loads(artifact.read_text(encoding="utf-8"))
         if data.get("version") != VERSION or data.get("source_hash") != source_hash:

@@ -19,6 +19,14 @@ class StructureTests(unittest.TestCase):
         cue.update(raw=r"{\k20}Singing", karaoke=True)
         self.assertEqual(detect_zones([], [track], 300)[0]["level"], "VERIFIED")
 
+    def test_partial_chapter_overlap_cannot_verify_long_style_run(self):
+        chapter = dict(start_time=100, end_time=120, tags=dict(title="ED"))
+        cue = dict(start=10., end=110., style="OP", raw="Ordinary dialogue", karaoke=False)
+        zones = detect_zones([chapter], [dict(index=3, cues=[cue])], 300)
+        self.assertEqual(next(z for z in zones if z["source"].startswith("subtitle"))["level"], "SOFT")
+        chapter["end_time"] = 400
+        self.assertFalse(any(z["level"] == "HARD" for z in detect_zones([chapter], [], 300)))
+
     def test_threshold_and_half_open_edges(self):
         zone = dict(id="z", start=20, end=50, level="HARD", label="OP", reason="chapter")
         self.assertFalse(zone_check(dict(start=0, end=100), [zone])[0])  # exactly 30%

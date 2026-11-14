@@ -86,6 +86,7 @@ def _open_job(job_id: str):
         "start": c.get("start"), "end": c.get("end"), "edit_version": len(c.get("edit_history", [])),
         "technical_validation": c.get("validation", "PROVISIONAL"), "caption_position": c.get("caption_position"),
         "overlays": c.get("overlays", {}), "render_preset": (c.get("render") or {}).get("render_preset", "fast"),
+        "zone_warnings": c.get("zone_warnings", []), "selection_reason": c.get("reason", ""),
         "glossary_replacements": (c.get("render") or {}).get("glossary_replacements", [])}
         for c in report.get("clips", []) if c.get("filename") and (folder / c["filename"]).is_file()]
     _publish(state="completed", report=report, job_id=job_id, job_folder=str(folder),
@@ -183,6 +184,7 @@ def _execute_job(source: Path, audio_index: int | None, caption_mode: str, job_i
             "job_output_directory": str(job_dir), "failure": failure,
             "drafts": [{"filename": c.get("filename"), "srt": Path(c.get("filename", "")).with_suffix(".srt").name,
                         "start": c.get("start"), "end": c.get("end"),
+                        "zone_warnings": c.get("zone_warnings", []), "selection_reason": c.get("reason", ""),
                         "technical_validation": c.get("validation", "not validated"),
                         "glossary_replacements": (c.get("render") or {}).get("glossary_replacements", []),
                         "mp4_exists": (job_dir / c.get("filename", "")).is_file(),
@@ -277,7 +279,7 @@ class Handler(BaseHTTPRequestHandler):
                     value = prepare_structure(source, ANALYSIS_CACHE / key)
                 from dialogue import assess_tracks
                 return self._json({**value, "tracks": [{k: v for k, v in t.items() if k != "cues"} for t in assess_tracks(value)],
-                                   "filter_enabled": (_read_json(PREFERENCES) or {}).get("structure_filter_enabled", True)})
+                                   "filter_enabled": value.get("filter_enabled", (_read_json(PREFERENCES) or {}).get("structure_filter_enabled", True))})
             except Exception as exc: return self._json({"error": str(exc)}, 400)
         if parsed.path == "/api/jobs":
             jobs = []
