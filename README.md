@@ -20,7 +20,7 @@ For an in-app browser, open that URL there. No processing starts until you click
 
 ## Daily workflow
 
-1. Choose one local episode, or paste its full path and click **Inspect tracks**.
+1. Click **Choose file** to use the browser file chooser, or paste a full local path and click **Inspect tracks**. Browser-selected files stay on this PC. Known originals are reused only after an exact SHA-256 content check; new files are stored under `Shorts_Output/Imports/` once. Importing does not start clipping.
 2. Select the desired audio track. English is selected only when metadata identifies one unambiguous English track. Listen to confirm it.
 3. Choose English transcription, translation to English, or an intentional captionless export.
 4. Generate up to two provisional drafts, or open **Mark my own clip** and enter source start/end seconds. Manual intervals bypass selection. Matching cached captions are reused; explicitly enable transcription if they are missing.
@@ -63,4 +63,4 @@ Historical research and the blind human-benchmark workspace remain separate unde
 
 `tests/ui-review.cjs` uses Playwright 1.57 and installed Microsoft Edge in headless mode. Start the server on port 8771 with a saved captioned job available. Set `CLIPPER_PLAYWRIGHT_MODULE` to your Playwright module directory, then run `node tests/ui-review.cjs`. An ordinary `playwright` installation also works without that variable. Override the server with `CLIPPER_UI_URL` and browser executable with `CLIPPER_BROWSER`.
 
-Checks cover the saved-job layout, desktop/mobile overflow, caption editing, polling/reload recovery, file inspection, and idle startup. The test creates no processing jobs, edits only disposable browser storage, and writes screenshots/results under ignored `.runtime/ui-review/`.
+Checks cover the saved-job layout, desktop/mobile overflow, caption editing, polling/reload recovery, file inspection, and idle startup. The test creates no processing jobs and edits only disposable browser storage. It exercises the real browser chooser against the saved source; set `CLIPPER_NEW_SOURCE` to an optional additional test video to verify a new local import. These selected files are transferred only to the local server. Screenshots/results are written under ignored `output/playwright/`.

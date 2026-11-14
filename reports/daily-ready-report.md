@@ -26,3 +26,10 @@ Headless Edge exercised the actual browser UI and selected metadata-labeled stre
 Launch: `run.bat`, or `.venv\Scripts\python.exe browser_preview.py --port 8770` and open `http://127.0.0.1:8770/`. Port 8770 served the page with idle startup in the smoke test. Delivery files: `Shorts_Output/Exports/<episode>/<job-id>/`.
 
 Remote implementation tip verified: `7828cdbd5acdd1ec71e1125ea0e8f60da0c9b8c5` on this feature branch only. This completion report is committed afterward; the final response records the verified documentation tip. No protected branch was pushed.
+
+
+## File chooser follow-up
+
+Installed the Playwright CLI and interactive skills into the user skill directory. Used the CLI's real file chooser with S01-E01, then tested manual creation, captions/trim, placement, hook/context, rerender (3.498s), delivery export and byte-identical version restore on a new test job. The browser now selects files directly; new videos stream to local Imports, and known originals are reused only after an exact SHA-256 content check. The old request-thread Tk dialog is retired. Status stays responsive during imports, interrupted transfers clean up, and selection never starts clipping. Also fixed saved-job refresh, accessible trim labels and favicon errors.
+
+Verification: **241 Python tests + 9 subtests**, **14 Playwright UI checks**, no page/console errors in the final browser pass. All 155 protected hashes stayed unchanged. Graphify's existing graph was queried without rebuilding (zero extraction/model cost); it predates the browser workspace, so current source was checked directly. Taste and Ponytail guided the focused UI changes. Skills are available automatically next turn. Owner listening remains pending.

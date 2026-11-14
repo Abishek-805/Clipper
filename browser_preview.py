@@ -17,6 +17,7 @@ from urllib.parse import parse_qs, unquote, urlparse
 from clipper import process_video, probe, rerender_single_clip
 from main import ANALYSIS_CACHE, APP_STATE, OUTPUT, PREFERENCES, _read_json, _whisper_model_cached, _write_json
 from model_manager import ModelManager
+from source_import import import_source
 from daily_workflow import manual_clip, restore_version, byte_range, export_delivery
 from glossary import load_glossary, glossary_path
 
@@ -297,21 +298,35 @@ class Handler(BaseHTTPRequestHandler):
         origin = self.headers.get("Origin")
         if origin and origin != f"http://{self.headers.get('Host', '')}":
             return self._json({"error": "Requests must originate from the local browser console."}, 403)
-        if self.path in {"/api/pick-file", "/api/manual", "/api/restore", "/api/glossary", "/api/export"}:
+        if self.path == "/api/import":
+            with _LOCK:
+                if _STATE.get("state") == "running" or _STATE.get("rendering") or _STATE.get("importing"):
+                    return self._json({"error": "An operation is already running"}, 409)
+                _STATE["importing"] = True
+            try:
+                known = []
+                for manifest in (OUTPUT / "jobs").glob("*/analysis.json"):
+                    try:
+                        value = json.loads(manifest.read_text(encoding="utf-8"))
+                        if isinstance(value.get("source_path"), str):
+                            known.append(value["source_path"])
+                    except (OSError, ValueError):
+                        continue
+                result = import_source(self.rfile, int(self.headers.get("Content-Length", "0")),
+                    unquote(self.headers.get("X-Filename", "")), OUTPUT / "Imports", known)
+                return self._json(result)
+            except (OSError, ValueError, RuntimeError) as exc:
+                return self._json({"error": str(exc)}, 400)
+            finally:
+                with _LOCK: _STATE["importing"] = False
+        if self.path == "/api/pick-file":
+            return self._json({"error": "Use the browser Choose file button or paste a local path"}, 410)
+        if self.path in {"/api/manual", "/api/restore", "/api/glossary", "/api/export"}:
             try:
                 body = json.loads(self.rfile.read(int(self.headers.get("Content-Length", "0"))) or b"{}")
                 with _LOCK:
-                    if _STATE.get("state") == "running" or _STATE.get("rendering"):
+                    if _STATE.get("state") == "running" or _STATE.get("rendering") or _STATE.get("importing"):
                         return self._json({"error": "An operation is already running"}, 409)
-                    if self.path == "/api/pick-file":
-                        import tkinter as tk
-                        from tkinter import filedialog
-                        root = tk.Tk(); root.withdraw()
-                        try:
-                            selected = filedialog.askopenfilename(parent=root, title="Choose one episode", filetypes=[("Videos", "*.mkv *.mp4 *.mov *.avi *.webm *.m4v")])
-                        finally:
-                            root.destroy()
-                        return self._json({"source": selected})
                     if self.path == "/api/glossary":
                         value = body.get("replacements")
                         if not isinstance(value, list) or len(value) > 500:
@@ -367,7 +382,7 @@ class Handler(BaseHTTPRequestHandler):
             try:
                 body = json.loads(self.rfile.read(int(self.headers.get("Content-Length", "0"))))
                 with _LOCK:
-                    if _STATE.get("state") == "running" or _STATE.get("rendering"):
+                    if _STATE.get("state") == "running" or _STATE.get("rendering") or _STATE.get("importing"):
                         return self._json({"error": "An operation is already running"}, 409)
                     _open_job(body.get("job_id"))
                 return self._json({"ok": True})
@@ -381,7 +396,7 @@ class Handler(BaseHTTPRequestHandler):
         try: body = json.loads(self.rfile.read(int(self.headers.get("Content-Length", "0"))))
         except (ValueError, json.JSONDecodeError): return self._json({"error": "Invalid JSON"}, 400)
         with _LOCK:
-            if _STATE.get("state") == "running" or _STATE.get("rendering"):
+            if _STATE.get("state") == "running" or _STATE.get("rendering") or _STATE.get("importing"):
                 return self._json({"error": "A job or clip render is already running"}, 409)
         if self.path == "/api/rerender":
             try:
@@ -411,7 +426,7 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json({"error": str(exc)}, 400)
             cancel = threading.Event()
             with _LOCK:
-                if _STATE.get("state") == "running" or _STATE.get("rendering"):
+                if _STATE.get("state") == "running" or _STATE.get("rendering") or _STATE.get("importing"):
                     return self._json({"error": "An operation is already running"}, 409)
                 _write_json(job_dir / "pending-edits.json", body)
                 _CANCEL = cancel
@@ -438,7 +453,7 @@ class Handler(BaseHTTPRequestHandler):
         except Exception as exc: return self._json({"error": str(exc)}, 400)
         thread = threading.Thread(target=_run_job, args=(source, audio_index, caption_mode, job_id), daemon=True)
         with _LOCK:
-            if _STATE.get("state") == "running" or _STATE.get("rendering"):
+            if _STATE.get("state") == "running" or _STATE.get("rendering") or _STATE.get("importing"):
                 return self._json({"error": "An operation is already running"}, 409)
             _STATE.update(state="running", status="Starting job")
             _CANCEL = threading.Event()

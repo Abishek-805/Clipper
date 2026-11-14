@@ -10,3 +10,6 @@ logs/
 .mypy_cache/
 .ruff_cache/
 *.egg-info/
+
+output/playwright/
+.playwright-cli/
