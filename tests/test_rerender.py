@@ -102,6 +102,20 @@ class SingleClipRerenderTests(unittest.TestCase):
                         rerender_single_clip(job, output.name, 0, 59, "caption")
                 render.assert_not_called()
 
+    def test_rerender_rejects_captions_from_another_audio_track(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            source, job, output = self.make_job(Path(tmp))
+            key = __import__("hashlib").sha256(str(source.resolve()).casefold().encode()).hexdigest()[:20]
+            cache = Path(tmp) / "Clipper" / "analysis_cache" / key
+            cache.mkdir(parents=True)
+            settings = {"audio_stream_index": 99, "task": "transcribe"}
+            (cache / "transcription.json").write_text(json.dumps({"settings": settings,
+                "fingerprint": clipper._transcription_fingerprint(source, settings), "words": []}))
+            with patch.dict(os.environ, {"LOCALAPPDATA": tmp}), patch.object(clipper, "render") as render:
+                with self.assertRaisesRegex(ValueError, "do not match"):
+                    rerender_single_clip(job, output.name, 0, 1)
+                render.assert_not_called()
+
     @unittest.skipUnless(ffmpeg_path(), "FFmpeg unavailable")
     def test_time_nudge_uses_cached_words_not_transcription(self):
         with tempfile.TemporaryDirectory() as tmp:

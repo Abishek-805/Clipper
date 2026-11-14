@@ -1340,9 +1340,17 @@ def rerender_single_clip(job_dir: Path, clip_id: str, start_s: float, end_s: flo
         cache_root = Path(os.environ.get("LOCALAPPDATA", Path.home())) / "Clipper" / "analysis_cache" / cache_key
         cache_path = cache_root / "transcription.json"
         try:
-            cached_words = json.loads(cache_path.read_text(encoding="utf-8"))["words"]
+            cached_data = json.loads(cache_path.read_text(encoding="utf-8"))
+            cached_words = cached_data["words"]
         except (OSError, json.JSONDecodeError, KeyError, TypeError) as exc:
             raise ValueError("Cached transcription words are unavailable; rerender will not start transcription") from exc
+        cached_settings = cached_data.get("settings")
+        settings = manifest.get("settings") or {}
+        expected_task = settings.get("transcription_task", "translate" if settings.get("caption_mode") == "Whisper translation to English" else "transcribe")
+        if cached_settings and (cached_settings.get("audio_stream_index") != settings.get("audio_stream_index") or
+                                cached_settings.get("task", "transcribe") != expected_task or
+                                cached_data.get("fingerprint") != _transcription_fingerprint(source, cached_settings)):
+            raise ValueError("Cached captions do not match this source/audio/task. Recreate matching captions explicitly or edit the saved SRT.")
         words = [Word(float(item["start"]), float(item["end"]), str(item["text"])) for item in cached_words]
     else:
         words = []
