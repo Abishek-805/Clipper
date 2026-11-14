@@ -21,6 +21,7 @@ from diagnostics import gpu_activity
 from source_import import import_source
 from daily_workflow import manual_clip, restore_version, byte_range, export_delivery
 from glossary import load_glossary, glossary_path
+from structure import prepare_structure, apply_overrides, write_json as write_structure_json
 
 _LOCK = threading.RLock()
 _CANCEL: threading.Event | None = None
@@ -146,7 +147,7 @@ def _execute_job(source: Path, audio_index: int | None, caption_mode: str, job_i
             progress, str(settings.get("encoder", "auto")), manager, False, None,
             transcription_enabled=caption_mode.startswith("Whisper"), audio_index=audio_index,
             caption_source=caption_mode, transcription_task=task, cache_root=cache_dir,
-            job_output_folder=job_dir)
+            job_output_folder=job_dir, structure_filter_enabled=settings.get("structure_filter_enabled", True))
         outcome = "interrupted" if cancel.is_set() else "completed"
     except Exception as exc:
         outcome = "interrupted" if cancel.is_set() or isinstance(exc, InterruptedError) else "failed"
@@ -264,6 +265,18 @@ class Handler(BaseHTTPRequestHandler):
             return self._json(snapshot)
         if parsed.path == "/api/glossary":
             return self._json({"replacements": load_glossary()})
+        if parsed.path == "/api/zones":
+            try:
+                query = parse_qs(parsed.query)
+                job_id = query.get("job_id", [""])[0]
+                if job_id:
+                    value = json.loads((_job_path(job_id) / "structure.json").read_text(encoding="utf-8"))
+                else:
+                    source, _ = _probe_source(query.get("source", [""])[0])
+                    key = hashlib.sha256(str(source.resolve()).casefold().encode()).hexdigest()[:20]
+                    value = prepare_structure(source, ANALYSIS_CACHE / key)
+                return self._json({**value, "filter_enabled": (_read_json(PREFERENCES) or {}).get("structure_filter_enabled", True)})
+            except Exception as exc: return self._json({"error": str(exc)}, 400)
         if parsed.path == "/api/jobs":
             jobs = []
             for path in sorted((OUTPUT / "jobs").glob("*/analysis.json"), reverse=True):
@@ -337,13 +350,38 @@ class Handler(BaseHTTPRequestHandler):
             finally:
                 with _LOCK: _STATE["importing"] = False
         if self.path == "/api/pick-file":
+            # Drain the small retired request so Windows does not reset the response socket.
+            self.rfile.read(min(1024, int(self.headers.get("Content-Length", "0"))))
             return self._json({"error": "Use the browser Choose file button or paste a local path"}, 410)
-        if self.path in {"/api/manual", "/api/restore", "/api/glossary", "/api/export"}:
+        if self.path in {"/api/manual", "/api/restore", "/api/glossary", "/api/export", "/api/zones"}:
             try:
                 body = json.loads(self.rfile.read(int(self.headers.get("Content-Length", "0"))) or b"{}")
                 with _LOCK:
                     if _STATE.get("state") == "running" or _STATE.get("rendering") or _STATE.get("importing"):
                         return self._json({"error": "An operation is already running"}, 409)
+                    if self.path == "/api/zones":
+                        source, _ = _probe_source(body.get("source", ""))
+                        key = hashlib.sha256(str(source.resolve()).casefold().encode()).hexdigest()[:20]
+                        value = prepare_structure(source, ANALYSIS_CACHE / key)
+                        overrides = body.get("overrides")
+                        if not isinstance(overrides, list) or len(overrides) > 500:
+                            raise ValueError("Expected at most 500 overrides")
+                        value["active"] = apply_overrides(value["detected"], overrides, value["duration"])
+                        enabled = body.get("filter_enabled", True)
+                        if type(enabled) is not bool:
+                            raise ValueError("filter_enabled must be a boolean")
+                        write_structure_json(value["override_file"], overrides)
+                        preferences = _read_json(PREFERENCES) or {}
+                        preferences["structure_filter_enabled"] = enabled
+                        _write_json(PREFERENCES, preferences)
+                        if body.get("job_id"):
+                            folder = _job_path(body["job_id"])
+                            saved = json.loads((folder / "analysis.json").read_text(encoding="utf-8"))
+                            if Path(saved["source_path"]).resolve() != source:
+                                raise ValueError("Job source differs from selected episode")
+                            value["overrides"] = overrides
+                            write_structure_json(folder / "structure-overrides-pending.json", value)
+                        return self._json({"ok": True, "active": value["active"]})
                     if self.path == "/api/glossary":
                         value = body.get("replacements")
                         if not isinstance(value, list) or len(value) > 500:

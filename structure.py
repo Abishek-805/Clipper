@@ -190,3 +190,28 @@ def write_json(path, value):
     temporary = path.with_suffix(path.suffix + ".tmp")
     temporary.write_text(json.dumps(value, ensure_ascii=False, indent=2), encoding="utf-8")
     temporary.replace(path)
+
+
+def prepare_structure(path, cache_folder, job_folder=None):
+    digest = hashlib.sha256()
+    with Path(path).open("rb") as handle:
+        for block in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(block)
+    source_hash = digest.hexdigest()
+    artifact = Path(cache_folder) / f"structure-{source_hash[:20]}.json"
+    try:
+        data = json.loads(artifact.read_text(encoding="utf-8"))
+        if data.get("version") != VERSION or data.get("source_hash") != source_hash:
+            raise ValueError("Structure cache version/source mismatch")
+    except (OSError, ValueError):
+        data = {**inspect_source(path), "source_hash": source_hash}
+        write_json(artifact, data)
+    override_path = Path(cache_folder) / f"zone-overrides-{source_hash[:20]}.json"
+    records = json.loads(override_path.read_text(encoding="utf-8")) if override_path.exists() else []
+    if not isinstance(records, list) or len(records) > 500:
+        raise ValueError("Expected at most 500 zone override records")
+    result = {**data, "overrides": records, "override_file": str(override_path),
+              "active": apply_overrides(data["detected"], records, data["duration"])}
+    if job_folder is not None:
+        write_json(Path(job_folder) / "structure.json", result)
+    return result

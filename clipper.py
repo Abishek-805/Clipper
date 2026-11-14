@@ -27,6 +27,7 @@ from model_manager import ModelManager
 from vision import (VisionModelManager, extract_candidate_frames, read_semantic_cache,
                     semantic_cache_key, write_semantic_cache)
 from gpu_analysis import visual_signals as _gpu_visual_signals
+from structure import prepare_structure, zone_check
 
 VIDEO_EXTENSIONS = {".mp4", ".mkv", ".mov", ".avi", ".webm", ".m4v"}
 ANALYSIS_ENGINE_VERSION = "nvdec-shared-visual-pass-v1"
@@ -792,6 +793,9 @@ def select_diverse_candidates(candidates: list[dict], count: int, duration: floa
         raise ValueError("category_weight must be a finite nonnegative value")
     selected, rejected = [], []
     remaining = [c for c in candidates if c.get("boundary_valid", True) and c["score"] >= minimum_score]
+    unflagged = [c for c in remaining if not c.get("zone_warnings")]
+    if unflagged:
+        remaining = unflagged
     categories = {c.get("semantic_category") for c in remaining
                   if c.get("semantic_category") not in (None, "UNCERTAIN")}
     use_category_diversity = len(categories) > 1 and category_weight > 0
@@ -885,15 +889,33 @@ def select_clips(duration: float, motion: list[float], audio: list[float], cuts:
                  minimum_distance: float = 5.0, context_margin: float = 2.5,
                  scoring_weights: dict | None = None, cancel: threading.Event | None = None,
                  include_ranges: list[tuple[float, float]] | None = None,
-                 exclude_ranges: list[tuple[float, float]] | None = None) -> dict:
+                 exclude_ranges: list[tuple[float, float]] | None = None,
+                 zones: list[dict] | None = None, zone_filter_enabled: bool = True) -> dict:
     generated = generate_candidates(duration, motion, audio, cuts, words, min_length, max_length, cancel, context_margin)
-    candidates = rank_candidates(generated["candidates"], duration, motion, audio, cuts, words,
+    zone_rejections = []
+    pool = []
+    for candidate in generated["candidates"]:
+        blocked, _ = zone_check(candidate, zones or []) if zone_filter_enabled else ([], [])
+        if blocked:
+            zone_rejections.append({"start": candidate["start"], "end": candidate["end"],
+                                    "reason": "structure zone exclusion before ranking", "zones": blocked})
+        else:
+            pool.append(candidate)
+    candidates = rank_candidates(pool, duration, motion, audio, cuts, words,
                                  min_length, max_length, context_margin, scoring_weights, cancel)
     include_ranges, exclude_ranges = include_ranges or [], exclude_ranges or []
     range_rejections = []
     in_range = []
     for candidate in candidates:
         interval = (candidate["start"], candidate["end"])
+        blocked, warnings = zone_check(candidate, zones or []) if zone_filter_enabled else ([], [])
+        candidate["zone_warnings"] = warnings
+        if blocked:
+            zone_rejections.append({"start": interval[0], "end": interval[1], "reason": "structure zone exclusion after boundary refinement", "zones": blocked})
+            continue
+        if warnings:
+            candidate["score_before_zone_penalty"] = candidate["score"]
+            candidate["score"] = round(max(.075 if candidate["score"] >= .075 else 0, candidate["score"] * .7), 4)
         if include_ranges and not any(left <= interval[0] and interval[1] <= right for left, right in include_ranges):
             range_rejections.append({"start": interval[0], "end": interval[1], "reason": "outside manual include ranges"})
         elif any(interval[0] < right and interval[1] > left for left, right in exclude_ranges):
@@ -910,7 +932,7 @@ def select_clips(duration: float, motion: list[float], audio: list[float], cuts:
         quiet_static = (not has_dialogue and features.get("average_motion", 0) < .16 and
                         features.get("average_audio_energy", 0) < .08)
         likely_credits = quiet_static and (candidate["start"] >= duration * .84 or candidate["start"] <= duration * .08)
-        if likely_credits:
+        if likely_credits and (zones is None or not zone_filter_enabled):
             candidate["selected"] = False
             credit_rejections.append({"start": candidate["start"], "end": candidate["end"],
                                       "reason": "likely intro/title/credit material: low motion/audio and no dialogue evidence"})
@@ -920,7 +942,9 @@ def select_clips(duration: float, motion: list[float], audio: list[float], cuts:
                                         "reason": "invalid refined boundary"})
         else:
             eligible.append(candidate)
-    unique, duplicate_rejections = deduplicate_candidates(eligible, cancel=cancel)
+    unflagged = [c for c in eligible if not c.get("zone_warnings") and c.get("score", 0) >= .075]
+    selection_pool = unflagged or eligible
+    unique, duplicate_rejections = deduplicate_candidates(selection_pool, cancel=cancel)
     selected, selection_rejections = select_diverse_candidates(unique, count, duration, minimum_distance, cancel=cancel)
     selected_ids = {id(candidate) for candidate in selected}
     for candidate in candidates:
@@ -929,6 +953,9 @@ def select_clips(duration: float, motion: list[float], audio: list[float], cuts:
     generated["candidates"] = candidates
     generated["selected"] = selected
     generated["rejections"].extend(range_rejections)
+    generated["rejections"].extend(zone_rejections)
+    generated["rejections"].extend({"start": c["start"], "end": c["end"], "reason": "soft zone warning; unflagged candidates available"}
+                                  for c in eligible if unflagged and c.get("zone_warnings"))
     generated["rejections"].extend(credit_rejections)
     generated["rejections"].extend(boundary_rejections)
     generated["rejections"].extend(duplicate_rejections)
@@ -1458,7 +1485,8 @@ def process_video(path: Path, output_root: Path, model_size: str, clip_count: in
                   transcription_enabled: bool = True, semantic_only: bool = False,
                   audio_index: int | None = None, caption_source: str = "whisper",
                   transcription_task: str = "transcribe", subtitle_index: int | None = None,
-                  cache_root: Path | None = None, job_output_folder: Path | None = None) -> int:
+                  cache_root: Path | None = None, job_output_folder: Path | None = None,
+                  structure_filter_enabled: bool = True) -> int:
     total_started = time.perf_counter()
     stage_timings = {}
     stage_started = time.perf_counter()
@@ -1496,7 +1524,15 @@ def process_video(path: Path, output_root: Path, model_size: str, clip_count: in
                 "caption_style": os.getenv("CLIPPER_CAPTION_STYLE", "bold_pop"),
                 "caption_placement": os.getenv("CLIPPER_CAPTION_PLACEMENT", "auto"),
                 "audio_stream_index": audio_index, "caption_source": caption_source,
-                "transcription_task": transcription_task, "subtitle_stream_index": subtitle_index}
+                "transcription_task": transcription_task, "subtitle_stream_index": subtitle_index,
+                "structure_filter_enabled": structure_filter_enabled, "structure_version": "episode-structure-v1"}
+    progress("Structure inspection · chapters and embedded subtitle evidence; no AI")
+    try:
+        structure = prepare_structure(path, cache_folder, folder)
+    except (subprocess.CalledProcessError, OSError) as exc:
+        structure = {"active": [], "detected": [], "status": "unavailable", "reason": str(exc)}
+        progress(f"Structure inspection unavailable; unknown regions stay eligible: {exc}")
+    settings["zone_overrides"] = structure.get("overrides", [])
     existing_manifest = {}
     if manifest_path.exists():
         try:
@@ -1609,7 +1645,8 @@ def process_video(path: Path, output_root: Path, model_size: str, clip_count: in
     progress("Candidate ranking · CPU · cached visual/audio/dialogue signals")
     selection = select_clips(info.duration, motion, energy, cuts, words, clip_count, min_length, max_length,
                              context_margin=context_margin, cancel=cancel,
-                             include_ranges=include_ranges, exclude_ranges=exclude_ranges)
+                             include_ranges=include_ranges, exclude_ranges=exclude_ranges,
+                             zones=structure["active"], zone_filter_enabled=structure_filter_enabled)
     stage_timings["candidate_selection_seconds"] = round(time.perf_counter() - stage_started, 3)
     editorial_summary = {"status": "unavailable", "provider": None, "prompt_version": "editorial-v1",
                          "quality_floor": QUALITY_FLOOR, "assessed": 0,
@@ -1821,6 +1858,7 @@ def process_video(path: Path, output_root: Path, model_size: str, clip_count: in
                     "selected_audio_stream_index": audio_index, "caption_source": caption_source,
                     "transcription_task": transcription_task,
                     "clips": report_clips, "candidate_selection": candidate_report, "editorial_analysis": editorial_summary,
+                    "structure": {k: v for k, v in structure.items() if k != "tracks"},
                     "semantic_analysis": semantic_summary, "candidate_storyboard": dict(storyboard_summary),
                     "review_artifacts": dict(review_artifacts),
                     "queue_stage": queue_stage, "stage_timings": dict(stage_timings),
