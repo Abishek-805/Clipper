@@ -231,10 +231,13 @@ class Task05Tests(unittest.TestCase):
             main.ClippingApp._open_review_debug(app)
             main.ClippingApp._reveal_review_clip(app)
         opened = [call.args[0].as_posix() for call in opener.call_args_list]
-        self.assertEqual(["results/source/clip_001.mp4", "results/source/clip_001.srt",
+        expected = ["results/source/clip_001.mp4", "results/source/clip_001.srt",
                           "results/source/analysis.json", "results/source/clip_contact_sheet.png",
-                          "results/source/reframe_debug/clip_001.png"], opened)
-        self.assertEqual(1, popen.call_count)
+                          "results/source/reframe_debug/clip_001.png"]
+        if main.os.name != "nt":
+            expected.append("results/source")
+        self.assertEqual(expected, opened)
+        self.assertEqual(int(main.os.name == "nt"), popen.call_count)
 
     def test_review_list_loads_only_safe_clip_filenames_and_thumbnail(self):
         import main

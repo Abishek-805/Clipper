@@ -9,6 +9,7 @@ from unittest.mock import patch
 from clipper_runtime import cuda_dlls
 
 
+@unittest.skipUnless(os.name == "nt", "Requires Windows DLL APIs")
 class CudaDllDirectoryTests(unittest.TestCase):
     def setUp(self):
         cuda_dlls._DLL_DIRECTORY_HANDLES.clear()

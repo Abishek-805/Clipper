@@ -108,7 +108,7 @@ def assess_candidate(endpoint: str, model: str, words: list, start: float, end: 
                 raise ValueError("Local model server redirected outside loopback")
             return super().redirect_request(req, fp, code, msg, headers, newurl)
     try:
-        with urllib.request.build_opener(LoopbackRedirect).open(request, timeout=90) as response:
+        with urllib.request.build_opener(urllib.request.ProxyHandler({}), LoopbackRedirect).open(request, timeout=90) as response:
             data = json.loads(response.read())
     except (urllib.error.URLError, TimeoutError, json.JSONDecodeError) as exc:
         raise RuntimeError(f"Local narrative model request failed: {exc}") from exc

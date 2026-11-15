@@ -39,6 +39,11 @@ class BrowserPreviewTests(unittest.TestCase):
             self.assertIn("@media(max-width:650px)", page)
             status = json.loads(urlopen(base + "/api/status", timeout=3).read())
             self.assertIn("state", status)
+            bad_host = Request(base + "/api/status", headers={"Host": "elsewhere.invalid"})
+            with self.assertRaises(HTTPError) as denied:
+                urlopen(bad_host, timeout=3)
+            self.assertEqual(403, denied.exception.code)
+            denied.exception.close()
         finally:
             server.shutdown()
             server.server_close()

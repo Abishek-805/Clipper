@@ -13,6 +13,31 @@ import clipper
 from model_manager import ModelManager
 
 
+def whisper_transcript(source, info, cache_root, audio_index, caption_mode, allow_inference, cancel, progress=None):
+    key = hashlib.sha256(str(source.resolve()).casefold().encode()).hexdigest()[:20]
+    manager = ModelManager("small", local_files_only=True)
+    try:
+        return clipper.transcribe(source, info.has_audio, "small", cache_root / key / "transcription.json", cancel,
+            model_manager=manager, audio_index=audio_index, allow_inference=allow_inference, progress=progress,
+            task="translate" if caption_mode == "Whisper translation to English" else "transcribe")
+    finally:
+        manager.release_whisper()
+
+
+def transcript_rows(words):
+    rows, current = [], []
+    for word in clipper._valid_words(words):
+        if current and (word.start - current[-1].end > 1.15 or len(current) >= 30 or
+                        current[-1].text.rstrip().endswith((".", "?", "!"))):
+            rows.append(current)
+            current = []
+        current.append(word)
+    if current:
+        rows.append(current)
+    return [{"start": group[0].start, "end": group[-1].end,
+             "text": clipper.join_word_tokens([word.text for word in group])} for group in rows]
+
+
 def interval(start, end, duration):
     start, end = float(start), float(end)
     if not all(math.isfinite(x) for x in (start, end)) or not 0 <= start < end <= duration:
@@ -32,24 +57,16 @@ def manual_clip(source: Path, folder: Path, cache_root: Path, audio_index, start
     words = []
     transcription = None
     release_structure = None
-    manager = ModelManager("small", local_files_only=True)
-    try:
-        if caption_mode == "Release subtitles":
-            key = hashlib.sha256(str(source.resolve()).casefold().encode()).hexdigest()[:20]
-            release_structure = clipper.prepare_structure(source, cache_root / key, source_profile=source_profile)
-            selected = clipper.release_cues(release_structure)
-            words = [clipper.Word(**c) for c in selected["cues"]]
-        elif caption_mode != "None":
-            key = hashlib.sha256(str(source.resolve()).casefold().encode()).hexdigest()[:20]
-            transcription = clipper.transcribe(source, info.has_audio, "small", cache_root / key / "transcription.json",
-                cancel, model_manager=manager, audio_index=audio_index,
-                allow_inference=allow_transcription,
-                task="translate" if caption_mode == "Whisper translation to English" else "transcribe")
-            if transcription.status not in {"transcribed", "no_speech", "no_audio_track"}:
-                raise ValueError("Matching captions are unavailable. Enable explicit transcription or choose None. " + transcription.message)
-            words = transcription.words
-    finally:
-        manager.release_whisper()
+    if caption_mode == "Release subtitles":
+        key = hashlib.sha256(str(source.resolve()).casefold().encode()).hexdigest()[:20]
+        release_structure = clipper.prepare_structure(source, cache_root / key, source_profile=source_profile)
+        selected = clipper.release_cues(release_structure)
+        words = [clipper.Word(**c) for c in selected["cues"]]
+    elif caption_mode != "None":
+        transcription = whisper_transcript(source, info, cache_root, audio_index, caption_mode, allow_transcription, cancel)
+        if transcription.status not in {"transcribed", "no_speech", "no_audio_track"}:
+            raise ValueError("Matching captions are unavailable. Enable explicit transcription or choose None. " + transcription.message)
+        words = transcription.words
     if cancel.is_set():
         raise InterruptedError("Cancelled")
     folder.mkdir(parents=True, exist_ok=False)
@@ -65,10 +82,13 @@ def manual_clip(source: Path, folder: Path, cache_root: Path, audio_index, start
         "clips": [], "selection_status": "PROVISIONAL"}
     clipper._write_manifest(folder / "analysis.json", manifest)
     clipper._write_manifest(folder / "pending-edits.json", {"start": start, "end": end, "overlays": overlays})
-    plan = None
-    if source_profile in FULL_FRAME:
-        plan = clipper.build_reframe_plan(source, start, end, [], cancel, preserve_source=True)
-        record["reframing"] = plan
+    try:
+        plan = clipper.build_reframe_plan(source, start, end, [], cancel, preserve_source=source_profile in FULL_FRAME)
+    except InterruptedError:
+        raise
+    except Exception as exc:
+        plan = {"status": "fallback", "shots": [], "reason": f"Smart framing unavailable: {exc}"}
+    record["reframing"] = plan
     result = clipper.render(source, folder / record["filename"], info, record, words, info.has_audio, cancel,
         reframe_plan=plan,
         audio_index=audio_index, captions_required=bool(words), render_preset=preset, overlays=overlays,
@@ -96,7 +116,9 @@ def restore_version(folder: Path, filename: str, version: int):
     for suffix in (".mp4", ".srt"):
         if not target.with_name(f"{target.stem}.v{version}{suffix}").is_file():
             raise ValueError("Saved version is incomplete")
-    next_version = max([int(p.stem.rsplit('.v', 1)[1]) for p in folder.glob(f"{target.stem}.v*.mp4")], default=0)+1
+    versions = [int(match.group(1)) for path in folder.glob(f"{target.stem}.v*.mp4")
+                if (match := re.fullmatch(re.escape(target.stem) + r"\.v(\d+)\.mp4", path.name))]
+    next_version = max(versions, default=0) + 1
     for suffix in (".mp4", ".srt"):
         current = target.with_suffix(suffix)
         shutil.copy2(current, target.with_name(f"{target.stem}.v{next_version}{suffix}"))
@@ -138,7 +160,8 @@ def export_delivery(folder: Path, filename: str, output_root: Path):
     if not clip or source is None or not source.is_file():
         raise ValueError("Choose an existing clip in the job")
     info = clipper.probe(source)
-    clipper.validate_output(source, float(clip["end"])-float(clip["start"]), info.has_audio,
+    expected_audio = (clip.get("render") or {}).get("audio_codec", "aac" if info.has_audio else None) is not None
+    clipper.validate_output(source, float(clip["end"])-float(clip["start"]), expected_audio,
                             source.with_suffix(".srt"), captions_required=False)
     episode = re.sub(r'[^\w .-]', '_', Path(manifest.get("source", "episode")).stem)[:80].strip(' .') or "episode"
     destination = output_root / "Exports" / episode / folder.name

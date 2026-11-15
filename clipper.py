@@ -323,7 +323,7 @@ def _transcription_fingerprint(path: Path, settings: dict) -> str:
 
 
 def _manifest_clip_path(folder: Path, filename: object) -> Path | None:
-    if not isinstance(filename, str) or Path(filename).name != filename or Path(filename).suffix.lower() != ".mp4":
+    if not isinstance(filename, str) or re.search(r"[/\\:]", filename) or Path(filename).suffix.lower() != ".mp4":
         return None
     candidate = folder / filename
     return candidate if candidate.resolve().parent == folder.resolve() else None
@@ -740,7 +740,7 @@ def _candidate_features(candidate: dict, visual: list[float], sound: list[float]
     audio_variation = min(1.0, (max(a) - min(a)) if len(a) > 1 else 0.0)
     still_silence = sum(visual[i] < 0.12 and sound[i] < 0.12 and i not in speech_seconds
                         for i in range(left, min(right, len(visual)))) / count
-    static_interval = sum(m[index] < 0.12 and index not in speech_seconds for index in range(len(m))) / count if m else 1.0
+    static_interval = sum(value < 0.12 and left + index not in speech_seconds for index, value in enumerate(m)) / count if m else 1.0
     return {"average_motion": round(average_motion, 3), "peak_motion": round(max(m, default=0.0), 3),
             "motion_consistency": round(motion_consistency, 3), "average_audio_energy": round(average_audio, 3),
             "audio_energy_variation": round(audio_variation, 3), "speech_density": round(speech_density, 3),
@@ -1110,7 +1110,7 @@ def _embedded_subtitles(path: Path, stream_index: int, cancel: threading.Event) 
 
 
 def _escape_filter(path: Path) -> str:
-    return str(path.resolve()).replace("\\", "/").replace(":", r"\:").replace("'", r"\'")
+    return path.as_posix().replace(":", r"\:").replace("'", r"\'")
 
 
 def validate_srt(path: Path, duration: float, allow_empty: bool = True) -> int:
@@ -1281,24 +1281,23 @@ def render(path: Path, output: Path, info: VideoInfo, clip: dict, words: list[Wo
     placement = caption_position or os.getenv("CLIPPER_CAPTION_PLACEMENT", "auto")
     position = placement
     placement = {"bottom-safe": "lower", "center-lower": "middle"}.get(placement, placement)
-    ass_path.write_text(_ass_text(words, clip["start"], clip["end"], placement=placement,
-                                  placements=caption_shots, glossary=glossary,
-                                  caption_cues=caption_cues,
-                                  caption_position={"bottom-safe": "lower", "center-lower": "center-lower"}.get(position)), encoding="utf-8-sig")
-    if overlays:
-        margin = int(overlays.get("margin", 120))
-        if not 60 <= margin <= 400:
-            raise ValueError("Text margin must be 60–400 pixels")
-        with ass_path.open("a", encoding="utf-8") as stream:
+    try:
+        ass = _ass_text(words, clip["start"], clip["end"], placement=placement,
+                        placements=caption_shots, glossary=glossary, caption_cues=caption_cues,
+                        caption_position={"bottom-safe": "lower", "center-lower": "center-lower"}.get(position))
+        if overlays:
+            margin = int(overlays.get("margin", 120))
+            if not 60 <= margin <= 400:
+                raise ValueError("Text margin must be 60–400 pixels")
             for key, left, right in (("hook", 0, 2), ("context", 2, 6)):
                 text = overlays.get(key, "")
                 if not isinstance(text, str) or len(text) > 160:
                     raise ValueError("Hook and context must be text of at most 160 characters")
                 if text.strip() and duration > left:
-                    stream.write(f"\nDialogue: 1,{_ass_time(left)},{_ass_time(min(right, duration))},Default,,{margin},{margin},{margin},,{{\\an8\\fs48}}{_ass_escape(text)}")
-    try:
-        filt = _render_filter(info, clip, ass_path, reframe_plan, render_preset)
-        cmd = ["ffmpeg", "-y", "-ss", f"{clip['start']:.3f}", "-i", str(path), "-t", f"{duration:.3f}", "-filter_complex", filt, "-map", "[v]", "-map_metadata", "-1", "-map_chapters", "-1"]
+                    ass += f"\nDialogue: 1,{_ass_time(left)},{_ass_time(min(right, duration))},Default,,{margin},{margin},{margin},,{{\\an8\\fs48}}{_ass_escape(text)}"
+        ass_path.write_text(ass, encoding="utf-8-sig")
+        filt = _render_filter(info, clip, Path(ass_path.name), reframe_plan, render_preset)
+        cmd = ["ffmpeg", "-y", "-ss", f"{clip['start']:.3f}", "-i", str(path.resolve()), "-t", f"{duration:.3f}", "-filter_complex", filt, "-map", "[v]", "-map_metadata", "-1", "-map_chapters", "-1"]
         if has_audio:
             if audio_index is None:
                 audio_index = next((s["index"] for s in (info.streams or []) if s["type"] == "audio" and s["default"]),
@@ -1311,9 +1310,9 @@ def render(path: Path, output: Path, info: VideoInfo, clip: dict, words: list[Wo
             cmd += ["-an"]
         cmd += ["-c:v", selected_encoder]
         cmd += ["-preset", "p4", "-cq", "22", "-b:v", "0"] if selected_encoder == "h264_nvenc" else ["-preset", "veryfast", "-crf", "20"]
-        cmd += ["-pix_fmt", "yuv420p", "-movflags", "+faststart", "-shortest", str(temp_video)]
+        cmd += ["-pix_fmt", "yuv420p", "-movflags", "+faststart", "-shortest", str(temp_video.resolve())]
         encode_started = time.perf_counter()
-        _run(cmd, cancel)
+        _run(cmd, cancel, cwd=output.parent.resolve())
         encode_seconds = time.perf_counter() - encode_started
         validation_started = time.perf_counter()
         checked = validate_output(temp_video, duration, has_audio, temp_srt, cancel=cancel,
@@ -1369,7 +1368,8 @@ def _rerender_cues(value, start: float, end: float) -> list[dict] | None:
 def rerender_single_clip(job_dir: Path, clip_id: str, start_s: float, end_s: float,
                          caption_cues_or_text=None, caption_position: str = "bottom-safe",
                          allow_long_duration: bool = False, cancel: threading.Event | None = None,
-                         render_preset: str = "standard", overlays: dict | None = None) -> dict:
+                         render_preset: str = "standard", overlays: dict | None = None,
+                         analysis_cache_root: Path | None = None) -> dict:
     """Render one edited draft using only saved episode analysis and transcription data."""
     job_dir = Path(job_dir).resolve(strict=True)
     manifest_path = job_dir / "analysis.json"
@@ -1400,7 +1400,12 @@ def rerender_single_clip(job_dir: Path, clip_id: str, start_s: float, end_s: flo
     if caption_position not in {"bottom-safe", "center-lower"}:
         raise ValueError("Caption position must be bottom-safe or center-lower")
     caption_cues = _rerender_cues(caption_cues_or_text, start_s, end_s)
-    if caption_cues is None and (manifest.get("settings") or {}).get("caption_mode") == "None":
+    edited_cues = caption_cues if caption_cues_or_text is not None else clip_record.get("edited_caption_cues")
+    if caption_cues is None and edited_cues is not None:
+        # Saved corrections use source times, so moving the trim preserves their alignment.
+        caption_cues = clipped_cues(edited_cues, start_s, end_s)
+    if caption_cues is None and (not info.has_audio or manifest.get("caption_source") == "None" or
+                                  (manifest.get("settings") or {}).get("caption_mode") == "None"):
         words = []
     elif caption_cues is None and (manifest.get("caption_source") == "Release subtitles" or
                                   (manifest.get("settings") or {}).get("caption_mode") == "Release subtitles"):
@@ -1409,8 +1414,8 @@ def rerender_single_clip(job_dir: Path, clip_id: str, start_s: float, end_s: flo
         words = []
     elif caption_cues is None:
         cache_key = hashlib.sha256(str(source).casefold().encode("utf-8")).hexdigest()[:20]
-        cache_root = Path(os.environ.get("LOCALAPPDATA", Path.home())) / "Clipper" / "analysis_cache" / cache_key
-        cache_path = cache_root / "transcription.json"
+        cache_root = analysis_cache_root or Path(os.environ.get("LOCALAPPDATA", Path.home())) / "Clipper" / "analysis_cache"
+        cache_path = cache_root / cache_key / "transcription.json"
         try:
             cached_data = json.loads(cache_path.read_text(encoding="utf-8"))
             cached_words = cached_data["words"]
@@ -1481,6 +1486,8 @@ def rerender_single_clip(job_dir: Path, clip_id: str, start_s: float, end_s: flo
                         "glossary_replacements": result.get("glossary_replacements", [])})
         clip_record.update(start=start_s, end=end_s, duration=duration,
                            caption_position=caption_position, overlays=overlays or {}, render=result)
+        if caption_cues_or_text is not None:
+            clip_record["edited_caption_cues"] = edited_cues
         try:
             _write_manifest(manifest_path, manifest)
         except Exception:
@@ -1506,7 +1513,8 @@ def process_video(path: Path, output_root: Path, model_size: str, clip_count: in
                   audio_index: int | None = None, caption_source: str = "whisper",
                   transcription_task: str = "transcribe", subtitle_index: int | None = None,
                   cache_root: Path | None = None, job_output_folder: Path | None = None,
-                  structure_filter_enabled: bool = True, source_profile: str | None = None) -> int:
+                  structure_filter_enabled: bool = True, source_profile: str | None = None,
+                  editorial_enabled: bool = True, strict_captions: bool = False) -> int:
     from source_profiles import validate_profile, FULL_FRAME
     if source_profile is not None:
         validate_profile(source_profile)
@@ -1643,9 +1651,14 @@ def process_video(path: Path, output_root: Path, model_size: str, clip_count: in
         transcription_cache_mtime = cache.stat().st_mtime_ns
     except OSError:
         transcription_cache_mtime = None
-    transcript = release_subtitle_transcription(structure, folder) if caption_source == "Release subtitles" else transcribe(path, info.has_audio, model_size, cache, cancel, progress, model_manager, info.duration,
-                            allow_inference=transcription_enabled and caption_source.lower().startswith("whisper"),
-                            audio_index=audio_index, task=transcription_task)
+    if caption_source == "Release subtitles":
+        transcript = release_subtitle_transcription(structure, folder)
+    elif caption_source == "None":
+        transcript = TranscriptionResult(None, [], "disabled", "not_run", "not_run", "Caption mode is None", "DISABLED")
+    else:
+        transcript = transcribe(path, info.has_audio, model_size, cache, cancel, progress, model_manager, info.duration,
+                                allow_inference=transcription_enabled and caption_source.lower().startswith("whisper"),
+                                audio_index=audio_index, task=transcription_task)
     if caption_source.startswith("Embedded"):
         subtitle_tracks = [item for item in (info.streams or []) if item["type"] == "subtitle"]
         selected_sub = subtitle_index if subtitle_index is not None else next((s["index"] for s in subtitle_tracks if s["default"]), None)
@@ -1661,6 +1674,8 @@ def process_video(path: Path, output_root: Path, model_size: str, clip_count: in
     stage_timings["transcription_seconds"] = round(time.perf_counter() - stage_started, 3)
     if transcript.outcome == "CANCELLED":
         raise InterruptedError(transcript.message or "Processing cancelled")
+    if strict_captions and caption_source.lower().startswith("whisper") and transcript.status in {"failed", "unavailable"}:
+        raise RuntimeError(f"Whisper could not transcribe the selected audio: {transcript.message}")
     words = transcript.words
     plot_dialogue = choose_dialogue(structure, words)
     dialogue_summary = {**{k: v for k, v in plot_dialogue.items() if k != "cues"},
@@ -1692,7 +1707,7 @@ def process_video(path: Path, output_root: Path, model_size: str, clip_count: in
                          "quality_floor": QUALITY_FLOOR, "assessed": 0,
                          "reason": "Local narrative endpoint not configured"}
     try:
-        endpoint = local_endpoint()
+        endpoint = local_endpoint() if editorial_enabled else None
     except ValueError as exc:
         endpoint = None
         editorial_summary["reason"] = str(exc)
@@ -1995,7 +2010,8 @@ def process_video(path: Path, output_root: Path, model_size: str, clip_count: in
         for shot, placement in zip(reframe_plan.get("shots", []), caption_plan):
             shot["caption_placement"] = placement
         render_info = render(path, folder / filename, info, clip, words, audio_index is not None, cancel, encoder,
-                             reframe_plan, caption_plan, audio_index, caption_source != "None",
+                             reframe_plan, caption_plan, audio_index,
+                             caption_source != "None" and (not strict_captions or transcript.status != "no_audio_track"),
                              caption_cues=clipped_cues(plot_dialogue["cues"], clip["start"], clip["end"])
                              if caption_source == "Release subtitles" else None)
         stage_timings[f"clip_{index:03}_render_call_seconds"] = round(time.perf_counter() - clip_started, 3)

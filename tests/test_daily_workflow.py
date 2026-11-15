@@ -26,7 +26,7 @@ class DailyWorkflowTests(unittest.TestCase):
             root=Path(tmp)
             fixture=fixtures.SingleClipRerenderTests()
             source,_,_=fixture.make_job(root)
-            folder=root/'manual'
+            folder=root/"Editor's manual clip"
             with patch.object(clipper,'select_clips',side_effect=AssertionError('Selector must not run')):
                 result=manual_clip(source,folder,root/'cache',1,0,1.5,'None',False,threading.Event(),overlays={'hook':'My hook','context':'Context','margin':120})
             self.assertEqual('MANUAL',result['clips'][0]['selection'])
@@ -37,10 +37,14 @@ class DailyWorkflowTests(unittest.TestCase):
             self.assertNotEqual(delivery['filename'],again['filename'])
             original=(folder/'clip_001.mp4').read_bytes()
             clipper.rerender_single_clip(folder,'clip_001.mp4',0,1.8,'1\n00:00:00,000 --> 00:00:01,000\nEdited','bottom-safe',render_preset='fast')
+            clipper.rerender_single_clip(folder,'clip_001.mp4',.2,1.8,None,'center-lower',render_preset='fast')
+            captions = (folder/'clip_001.srt').read_text(encoding='utf-8')
+            self.assertIn('00:00:00,000 --> 00:00:00,800', captions)
+            self.assertIn('Edited', captions)
             restored=restore_version(folder,'clip_001.mp4',1)
             self.assertEqual(original,(folder/'clip_001.mp4').read_bytes())
             self.assertEqual(1.5,json.loads((folder/'analysis.json').read_text())['clips'][0]['end'])
-            self.assertEqual(2,restored['backup_version'])
+            self.assertEqual(3,restored['backup_version'])
 
     def test_missing_caption_cache_does_not_silently_render(self):
         with tempfile.TemporaryDirectory() as tmp:

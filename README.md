@@ -26,8 +26,8 @@ Broadcast support means local recorded files; no live capture, stream ingestion 
 
 1. Click **Choose file** to use the browser file chooser, or paste a full local path and click **Inspect tracks**. Browser-selected files stay on this PC. Known originals are reused only after an exact SHA-256 content check; new files are stored under `Shorts_Output/Imports/` once. Importing does not start clipping.
 2. Select the desired audio track. English is selected only when metadata identifies one unambiguous English track. Listen to confirm it.
-3. Choose English transcription, translation to English, or an intentional captionless export.
-4. Generate up to two provisional drafts, or open **Mark my own clip** and enter source start/end seconds. Manual intervals bypass selection. Matching cached captions are reused; explicitly enable transcription if they are missing.
+3. Choose **Whisper transcription** for captions in the spoken language, **Whisper translation to English**, or **None** to work without a model. A suitable embedded English subtitle track is another option.
+4. Open **Find a moment and mark my own clip**. Enter a source interval, or **Load transcript**, search for a phrase, and click a matching line to fill in its times. Extend the interval to keep the context you need. **Preview interval** plays a lightweight local copy with the selected audio track. Check **Transcribe explicitly** to build a missing transcript. **Create my draft** renders your selection. **Generate up to two provisional drafts** runs the existing activity-based selector instead.
 5. Review the MP4. Edit caption rows, source trim times, placement, optional hook/context, and render quality. Click **Save & Re-render Clip**.
 6. Click **Export delivery files**. The displayed folder contains MP4/SRT files and provenance JSON.
 7. Upload manually after checking audio, captions, framing, and publishing permissions.
@@ -46,13 +46,17 @@ Fast rendering uses a softer, lower-resolution blurred background. Standard pres
 
 ## Installation and runtime
 
-Run `setup.bat` if `.venv` is missing. Python 3.11+, FFmpeg/FFprobe, and Tkinter are required. The daily browser workflow requires the Whisper small model already cached for transcription; it does not silently download a model.
+Run `setup.bat` if `.venv` is missing or after updating dependencies. Install Python 3.11+ with Tkinter and FFmpeg/FFprobe with `libx264` and the `subtitles` filter. Setup offers to download the Whisper small model once for captions. After the download, the daily workflow runs locally. Choose **None** to start clipping immediately without Whisper. You can prepare the captions model later from PowerShell in the project folder:
+
+```powershell
+.\.venv\Scripts\python.exe browser_preview.py --setup-whisper
+```
 
 Whisper uses a verified CUDA path when available and CPU int8 otherwise. This machine reuses the already approved pinned CUDA libraries in `.runtime/llama.cpp/b12284/bin` and CTranslate2's bundled cuDNN through application-local DLL loading. A successful GPU detection alone is not an inference test. Optional vision models and `python-vlc` are not required for the daily workflow.
 
 ## Limits
 
-The current selector measures activity and dialogue; it cannot reliably establish entertainment value or story significance. Manual intervals are available when suggestions are poor. Browser playback of the original HEVC/MKV is not provided in this release; use typed source times and review the rendered clip. Audible English and perceptual synchronization require owner listening. Captions, crops, and added text do not establish copyright permission or monetization eligibility. No upload integration, cloud service, source downloader, webcam, or desktop recording feature is included.
+The current selector measures activity and dialogue. Review each suggestion for context and meaning. Use **Preview interval** for HEVC/MKV sources and confirm the selected audio and framing. For publishing, use your own recording or a source file supplied under a license or campaign that covers your edits and where you will post. Check third-party music and other material inside the recording. YouTube reviews reused content separately from rights permission. See the [clipping workflow audit](reports/clipping-workflow-audit.md) for details and source links.
 
 ## Development
 

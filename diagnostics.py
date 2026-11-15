@@ -39,7 +39,7 @@ def _tool_candidates(name: str) -> list[Path]:
     local = os.environ.get("LOCALAPPDATA")
     if local:
         packages = Path(local) / "Microsoft" / "WinGet" / "Packages"
-        for package in ("Gyan.FFmpeg*", "BtbN.FFmpeg*"):
+        for package in ("Gyan.FFmpeg", "BtbN.FFmpeg"):
             found.extend(packages.glob(f"{package}*/*/bin/{name}.exe"))
     unique = []
     seen = set()

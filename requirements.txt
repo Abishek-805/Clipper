@@ -1,5 +1,5 @@
 numpy>=1.26,<3
-opencv-python>=4.10
+opencv-python>=4.10,<5
 scenedetect>=0.7,<0.8
 faster-whisper>=1.1,<2
 av>=11,<19

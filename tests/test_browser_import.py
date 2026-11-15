@@ -26,7 +26,8 @@ class BrowserImportTests(unittest.TestCase):
  def test_pending_import_does_not_block_status_and_rejects_competing_jobs(self):
   sock=socket.create_connection(self.server.server_address,timeout=3)
   try:
-   sock.sendall(b'POST /api/import HTTP/1.0\r\nHost: localhost\r\nContent-Length: 1000\r\nX-Filename: episode.mp4\r\n\r\nx')
+   host=f'127.0.0.1:{self.server.server_address[1]}'
+   sock.sendall(f'POST /api/import HTTP/1.0\r\nHost: {host}\r\nContent-Length: 1000\r\nX-Filename: episode.mp4\r\n\r\nx'.encode())
    deadline=time.monotonic()+2
    while not browser_preview._STATE.get('importing') and time.monotonic()<deadline:time.sleep(.01)
    with urlopen(self.base+'/api/status',timeout=1) as response:self.assertTrue(json.load(response)['importing'])

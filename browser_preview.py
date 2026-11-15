@@ -14,16 +14,17 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, unquote, urlparse
 
-from clipper import process_video, probe, rerender_single_clip
+from clipper import _manifest_clip_path, process_video, probe, rerender_single_clip
 from main import ANALYSIS_CACHE, APP_STATE, OUTPUT, PREFERENCES, _read_json, _whisper_model_cached, _write_json
 from model_manager import ModelManager
 from diagnostics import gpu_activity
 from source_import import import_source
 from source_profiles import validate_profile, profile_zones
-from daily_workflow import manual_clip, restore_version, byte_range, export_delivery
+from daily_workflow import manual_clip, restore_version, byte_range, export_delivery, transcript_rows, whisper_transcript
+from dialogue import release_cues
 from glossary import load_glossary, glossary_path
 from structure import prepare_structure, apply_overrides, write_json as write_structure_json
-from known_moments import load_review as load_known_review, save_decision as save_known_decision, preview as known_preview
+from known_moments import interval_preview, load_review as load_known_review, save_decision as save_known_decision, preview as known_preview
 
 _LOCK = threading.RLock()
 _CANCEL: threading.Event | None = None
@@ -33,6 +34,9 @@ _MANIFEST_CACHE: dict[str, tuple[int, dict]] = {}
 _GPU_SAMPLE = {"sampling": False, "time": 0.0, "value": {"available": False}}
 _GPU_LOCK = threading.Lock()
 _ALLOWED_CAPTIONS = {"Whisper transcription", "Whisper translation to English", "Release subtitles", "None"}
+_WHISPER_SETUP_MESSAGE = ('Whisper small is missing. Run setup.bat and choose Y for Whisper, or run '
+                          '.venv\\Scripts\\python.exe browser_preview.py --setup-whisper. '
+                          'Choose None to keep clipping without captions.')
 _STATUS_REPORT_FIELDS = ("schema", "job_id", "source", "source_profile", "source_path", "source_size", "source_mtime_ns",
     "source_fingerprint", "selected_audio_stream_index", "selected_audio_stream", "caption_mode",
     "visual_analysis", "transcription_executed", "transcription_device", "transcription_compute_type", "transcription_fallback_reason", "cache",
@@ -43,6 +47,8 @@ if isinstance(_saved, dict) and _saved.get("state") != "running":
 elif isinstance(_saved, dict) and _saved.get("state") == "running":
     _STATE.update(_saved, state="interrupted", status="Previous browser job was interrupted; inspect its job folder before starting again.")
 _STATE["reviewing"] = False
+_STATE["rendering"] = False
+_STATE["importing"] = False
 
 PAGE = (Path(__file__).parent / "web" / "index.html").read_text(encoding="utf-8-sig")
 
@@ -61,12 +67,25 @@ def _publish(**changes):
     with _LOCK:
         _STATE.update(changes)
         snapshot = dict(_STATE)
+        try:
+            if isinstance(snapshot.get("report"), dict):
+                snapshot["report"] = {key: snapshot["report"].get(key) for key in _STATUS_REPORT_FIELDS}
+            _write_json(APP_STATE / "browser_preview_status.json", snapshot)
+        except OSError:
+            pass
+
+
+def setup_whisper():
+    from faster_whisper.utils import download_model
+
+    print("Preparing Whisper small for offline captions. This one-time download contacts Hugging Face.", flush=True)
     try:
-        if isinstance(snapshot.get("report"), dict):
-            snapshot["report"] = {key: snapshot["report"].get(key) for key in _STATUS_REPORT_FIELDS}
-        _write_json(APP_STATE / "browser_preview_status.json", snapshot)
-    except OSError:
-        pass
+        path = Path(download_model("small"))
+        if not (path / "model.bin").is_file():
+            raise RuntimeError("The downloaded model is incomplete")
+    except Exception as exc:
+        raise SystemExit(f"Whisper setup failed: {exc}") from exc
+    print("Whisper small is ready. Local transcription can now run offline.")
 
 
 def _probe_source(raw: str):
@@ -86,18 +105,28 @@ def _job_path(job_id: str) -> Path:
     return path
 
 
-def _open_job(job_id: str):
+def _finish_job(**changes):
+    global _CANCEL
+    with _LOCK:
+        _CANCEL = None
+        _publish(**changes)
+
+
+def _open_job(job_id: str, *, finished=False, status="Opened saved job", rerender_result=None):
     folder = _job_path(job_id)
     report = json.loads((folder / "analysis.json").read_text(encoding="utf-8"))
     report["drafts"] = [{"filename": c["filename"], "srt": Path(c["filename"]).with_suffix(".srt").name,
         "start": c.get("start"), "end": c.get("end"), "edit_version": len(c.get("edit_history", [])),
+        "media_revision": str(artifact.stat().st_mtime_ns),
         "technical_validation": c.get("validation", "PROVISIONAL"), "caption_position": c.get("caption_position"),
         "overlays": c.get("overlays", {}), "render_preset": (c.get("render") or {}).get("render_preset", "fast"),
         "zone_warnings": c.get("zone_warnings", []), "selection_reason": c.get("reason", ""),
         "glossary_replacements": (c.get("render") or {}).get("glossary_replacements", [])}
-        for c in report.get("clips", []) if c.get("filename") and (folder / c["filename"]).is_file()]
-    _publish(state="completed", report=report, job_id=job_id, job_folder=str(folder),
-             rendering=False, rerender_result=None, status="Opened saved job")
+        for c in report.get("clips", []) if (artifact := _manifest_clip_path(folder, c.get("filename"))) is not None
+        and artifact.is_file()]
+    publish = _finish_job if finished else _publish
+    publish(state="completed", report=report, job_id=job_id, job_folder=str(folder),
+            rendering=False, rerender_result=rerender_result, status=status)
 
 
 def _run_job(source: Path, audio_index: int | None, caption_mode: str, job_id: str, source_profile="general"):
@@ -105,9 +134,7 @@ def _run_job(source: Path, audio_index: int | None, caption_mode: str, job_id: s
     try:
         _execute_job(source, audio_index, caption_mode, job_id, source_profile)
     except Exception as exc:
-        _publish(state="failed", rendering=False, status=f"Could not run job: {exc}")
-    finally:
-        with _LOCK: _CANCEL = None
+        _finish_job(state="failed", rendering=False, status=f"Could not run job: {exc}")
 
 
 def _execute_job(source: Path, audio_index: int | None, caption_mode: str, job_id: str, source_profile="general"):
@@ -138,12 +165,13 @@ def _execute_job(source: Path, audio_index: int | None, caption_mode: str, job_i
     os.environ["CLIPPER_INCLUDE_RANGES"] = str(settings.get("include_ranges", ""))
     os.environ["CLIPPER_EXCLUDE_RANGES"] = str(settings.get("exclude_ranges", ""))
     audio_stream = next((s for s in (probe(source).streams or []) if s.get("type") == "audio" and s.get("index") == audio_index), None)
-    cancel = threading.Event()
-    with _LOCK: _CANCEL = cancel
+    with _LOCK:
+        cancel = _CANCEL or threading.Event()
+        _CANCEL = cancel
     job_dir.mkdir(parents=True, exist_ok=False)
     started = time.strftime("%Y-%m-%dT%H:%M:%S%z")
     _publish(state="running", status=f"Analyzing {source.name}", logs=[], job_id=job_id,
-             job_folder=str(job_dir), report=None, model_status=None)
+             job_folder=str(job_dir), report=None, model_status=None, rerender_result=None)
     manager = ModelManager(model_size, local_files_only=True,
                            status_callback=lambda info: _publish(model_status=info))
     outcome, failure, count = "failed", None, 0
@@ -157,7 +185,7 @@ def _execute_job(source: Path, audio_index: int | None, caption_mode: str, job_i
             transcription_enabled=caption_mode.startswith("Whisper"), audio_index=audio_index,
             caption_source=caption_mode, transcription_task=task, cache_root=cache_dir,
             job_output_folder=job_dir, structure_filter_enabled=settings.get("structure_filter_enabled", True),
-            source_profile=source_profile)
+            source_profile=source_profile, editorial_enabled=False, strict_captions=True)
         outcome = "interrupted" if cancel.is_set() else "completed"
     except Exception as exc:
         outcome = "interrupted" if cancel.is_set() or isinstance(exc, InterruptedError) else "failed"
@@ -200,31 +228,28 @@ def _execute_job(source: Path, audio_index: int | None, caption_mode: str, job_i
                         "srt_exists": (job_dir / Path(c.get("filename", "")).with_suffix(".srt").name).is_file()}
                        for c in clips]}
         _write_json(manifest_path, report)
-        _publish(state=outcome, status=f"{outcome.title()} · {len(report['drafts'])} draft(s) · {failure or 'review local outputs'}",
-                 report=report, job_id=job_id, job_folder=str(job_dir))
-        with _LOCK: _CANCEL = None
+        if failure:
+            summary = failure
+        elif report["drafts"]:
+            summary = "review local outputs"
+        else:
+            summary = analysis.get("candidate_selection", {}).get("short_source_reason") or "No candidates passed. Mark your own interval."
+        _finish_job(state=outcome, status=f"{outcome.title()} · {len(report['drafts'])} draft(s) · {summary}",
+                    report=report, job_id=job_id, job_folder=str(job_dir))
 
 
 def _run_rerender(job_id: str, clip_id: str, start: float, end: float, captions: str, position: str,
                   cancel: threading.Event, preset: str = "standard", overlays=None, allow_long=False):
-    global _CANCEL
     _publish(rendering=True, rerender_result=None, status=f"Re-rendering {clip_id}")
     try:
         result = rerender_single_clip(OUTPUT / "jobs" / job_id, clip_id, start, end,
-                                      captions, position, cancel=cancel, render_preset=preset, overlays=overlays, allow_long_duration=allow_long)
-        with _LOCK: report = dict(_STATE.get("report") or {})
-        for draft in report.get("drafts", []):
-            if draft.get("filename") == clip_id:
-                draft.update(start=start, end=end, edit_version=result["version"],
-                             glossary_replacements=result.get("glossary_replacements", []))
-        _open_job(job_id)
-        _publish(report=_STATE["report"], rendering=False, rerender_result={**result, "clip_id": clip_id},
-                 status=f"Re-rendered {clip_id} · {result['rerender_seconds']:.1f}s")
+                                      captions, position, cancel=cancel, render_preset=preset, overlays=overlays,
+                                      allow_long_duration=allow_long, analysis_cache_root=ANALYSIS_CACHE)
+        _open_job(job_id, finished=True, rerender_result={**result, "clip_id": clip_id},
+                  status=f"Re-rendered {clip_id} · {result['rerender_seconds']:.1f}s")
     except Exception as exc:
-        _publish(rendering=False, rerender_result={"clip_id": clip_id, "error": f"{type(exc).__name__}: {exc}"},
-                 status=f"Re-render failed · {type(exc).__name__}: {exc}")
-    finally:
-        with _LOCK: _CANCEL = None
+        _finish_job(rendering=False, rerender_result={"clip_id": clip_id, "error": f"{type(exc).__name__}: {exc}"},
+                    status=f"Re-render failed · {type(exc).__name__}: {exc}")
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -237,7 +262,40 @@ class Handler(BaseHTTPRequestHandler):
         self.send_response(code); self.send_header("Content-Type", "application/json; charset=utf-8")
         self.send_header("Cache-Control", "no-store"); self.send_header("Content-Length", str(len(data))); self.end_headers(); self.wfile.write(data)
 
+    def _local_host(self):
+        port = self.server.server_address[1]
+        return self.headers.get("Host") in {f"127.0.0.1:{port}", f"localhost:{port}"} or (
+            port == 80 and self.headers.get("Host") in {"localhost", "127.0.0.1"})
+
+    def _browse_source(self, body, cancel):
+        source, info = _probe_source(body.get("source", ""))
+        audio = body.get("audio_index")
+        tracks = {s["index"] for s in info.streams if s["type"] == "audio"}
+        if (tracks and (type(audio) is not int or audio not in tracks)) or (not tracks and audio is not None):
+            raise ValueError("Choose an audio track from the inspected source")
+        if self.path == "/api/source-preview":
+            stat = source.stat()
+            key = hashlib.sha256(f"preview|{source}|{stat.st_size}|{stat.st_mtime_ns}".encode()).hexdigest()
+            target = interval_preview(source, OUTPUT / "Review" / key, key, body.get("start"), body.get("end"), info, audio, cancel)
+            return {"url": f"/review-files/{key}/{target.name}", "source_start": float(body["start"])}
+        mode = body.get("caption_mode")
+        if mode == "Release subtitles":
+            key = hashlib.sha256(str(source).casefold().encode()).hexdigest()[:20]
+            cues = release_cues(prepare_structure(source, ANALYSIS_CACHE / key))["cues"]
+            return {"rows": [{k: cue[k] for k in ("start", "end", "text")} for cue in cues]}
+        if mode not in ("Whisper transcription", "Whisper translation to English"):
+            raise ValueError("Choose Whisper or release subtitles to browse the transcript")
+        allow_inference = body.get("allow_transcription") is True
+        if info.has_audio and allow_inference and not _whisper_model_cached("small"):
+            raise ValueError(_WHISPER_SETUP_MESSAGE)
+        result = whisper_transcript(source, info, ANALYSIS_CACHE, audio, mode, allow_inference, cancel)
+        if result.status not in {"transcribed", "no_speech", "no_audio_track"}:
+            raise ValueError("Transcript unavailable. " + result.message)
+        return {"rows": transcript_rows(result.words)}
+
     def do_GET(self):
+        if not self._local_host():
+            return self._json({"error": "Open Clipper using its local URL."}, 403)
         parsed = urlparse(self.path)
         if parsed.path == "/":
             data = PAGE.encode(); self.send_response(200); self.send_header("Content-Type", "text/html; charset=utf-8"); self.send_header("Content-Length", str(len(data))); self.end_headers(); self.wfile.write(data); return
@@ -314,12 +372,13 @@ class Handler(BaseHTTPRequestHandler):
             prefix = "/review-files/" if review else "/files/"
             parts = [unquote(p) for p in parsed.path.removeprefix(prefix).split("/")]
             if len(parts) != 2: return self._json({"error": "Invalid artifact path"}, 404)
-            if review and not re.fullmatch(r"[a-f0-9]{64}", parts[0]):
-                return self._json({"error": "Invalid source fingerprint"}, 404)
+            root_pattern = r"[a-f0-9]{64}" if review else r"[A-Za-z0-9_-]{1,80}"
+            if not re.fullmatch(root_pattern, parts[0]) or not re.fullmatch(r"[A-Za-z0-9_.-]+", parts[1]):
+                return self._json({"error": "Invalid artifact path"}, 404)
             base = (OUTPUT / ("Review" if review else "jobs")).resolve()
             root = (base / parts[0]).resolve()
             target = (root / parts[1]).resolve()
-            if root not in target.parents or not root.is_relative_to(base) or not target.is_file():
+            if target.parent != root or root.parent != base or not target.is_file():
                 return self._json({"error": "Artifact not found"}, 404)
             size = target.stat().st_size
             try:
@@ -345,8 +404,32 @@ class Handler(BaseHTTPRequestHandler):
     def do_POST(self):
         global _CANCEL
         origin = self.headers.get("Origin")
-        if origin and origin != f"http://{self.headers.get('Host', '')}":
+        if not self._local_host() or (origin and origin != f"http://{self.headers.get('Host', '')}"):
             return self._json({"error": "Requests must originate from the local browser console."}, 403)
+        if self.path in {"/api/transcript", "/api/source-preview"}:
+            try:
+                length = int(self.headers.get("Content-Length", "0"))
+                if not 0 < length <= 16_384:
+                    raise ValueError("Invalid request size")
+                body = json.loads(self.rfile.read(length))
+                if not isinstance(body, dict):
+                    raise ValueError("Expected a source selection")
+            except (ValueError, TypeError) as exc:
+                return self._json({"error": str(exc)}, 400)
+            with _LOCK:
+                if _operation_active():
+                    return self._json({"error": "An operation is already running"}, 409)
+                _STATE["reviewing"] = True
+                _CANCEL = cancel = threading.Event()
+            try:
+                result = self._browse_source(body, cancel)
+            except (OSError, ValueError, TypeError, RuntimeError) as exc:
+                return self._json({"error": str(exc)}, 400)
+            finally:
+                with _LOCK:
+                    _STATE["reviewing"] = False
+                    _CANCEL = None
+            return self._json(result)
         if self.path == "/api/known-moments":
             reserved = False
             try:
@@ -485,20 +568,20 @@ class Handler(BaseHTTPRequestHandler):
                     source_profile = validate_profile(body.get("source_profile", "general"))
                     if mode not in _ALLOWED_CAPTIONS:
                         raise ValueError("Invalid caption mode")
+                    if info.has_audio and mode.startswith("Whisper") and body.get("allow_transcription") is True and not _whisper_model_cached("small"):
+                        raise ValueError(_WHISPER_SETUP_MESSAGE)
                     job_id = "manual-" + time.strftime("%Y%m%d-%H%M%S") + "-" + uuid.uuid4().hex[:8]
                     cancel = threading.Event()
-                    _STATE.update(state="running", rendering=False, status="Creating manual interval")
+                    _STATE.update(state="running", rendering=False, status="Creating manual interval",
+                                  job_id=job_id, report=None, job_folder=None, rerender_result=None, logs=[], model_status=None)
                     _CANCEL = cancel
                     def worker():
-                        global _CANCEL
                         try:
                             manual_clip(source, _job_path(job_id), ANALYSIS_CACHE, audio, left, right, mode,
                                 body.get("allow_transcription") is True, cancel, body.get("render_preset", "fast"), body.get("overlays"), source_profile)
-                            _open_job(job_id)
+                            _open_job(job_id, finished=True, status="Manual draft ready")
                         except Exception as exc:
-                            _publish(state="interrupted" if cancel.is_set() else "failed", status=str(exc))
-                        finally:
-                            with _LOCK: _CANCEL = None
+                            _finish_job(state="interrupted" if cancel.is_set() else "failed", status=str(exc))
                     thread = threading.Thread(target=worker, daemon=True)
                     try:
                         thread.start()
@@ -578,8 +661,8 @@ class Handler(BaseHTTPRequestHandler):
             caption_mode = body.get("caption_mode")
             source_profile = validate_profile(body.get("source_profile", "general"))
             if caption_mode not in _ALLOWED_CAPTIONS: raise ValueError("Unsupported caption mode.")
-            if caption_mode.startswith("Whisper") and not _whisper_model_cached("small"):
-                raise ValueError("The local Whisper small model is not cached; no download was attempted.")
+            if audio and caption_mode.startswith("Whisper") and not _whisper_model_cached("small"):
+                raise ValueError(_WHISPER_SETUP_MESSAGE)
             job_id = time.strftime("%Y%m%d-%H%M%S") + "-" + uuid.uuid4().hex[:8]
         except Exception as exc: return self._json({"error": str(exc)}, 400)
         thread = threading.Thread(target=_run_job, args=(source, audio_index, caption_mode, job_id, source_profile), daemon=True)
@@ -617,7 +700,11 @@ if __name__ == "__main__":
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=8765)
     parser.add_argument("--open-browser", action="store_true")
+    parser.add_argument("--setup-whisper", action="store_true", help="Download the small model once for offline captions")
     args = parser.parse_args()
+    if args.setup_whisper:
+        setup_whisper()
+        raise SystemExit(0)
     if args.open_browser:
         import webbrowser
         threading.Timer(1, lambda: webbrowser.open(f"http://127.0.0.1:{args.port}/")).start()

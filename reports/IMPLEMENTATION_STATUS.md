@@ -1,5 +1,13 @@
 # Clipper implementation status
 
+## Supplied workflow audit — integrated and Windows-tested (2026-11-15)
+
+- Branch `codex/audit-workflow-fixes` from main `4bdb693f760b8b49cd7bc6c27ecf8209a2236159`. Imported the reviewed 18-file ZIP delta plus its audit report; source ZIP hash and provenance are recorded. The claimed upstream commit is not verifiable from a ZIP without Git history.
+- Transcript search/selected-audio preview, persistent source-relative caption corrections, apostrophe-safe rendering, FFmpeg discovery, optional explicit Whisper setup, strict daily model isolation, cancellation/state cleanup and loopback/path validation are integrated. OpenCV 4.14.0.94 is installed and exposes the face-detector API; full-frame profiles remain supported. Pending submission and initial-restoration UI races were fixed during browser verification.
+- Actual Windows baseline **338 + 9 subtests**; final **347 passed + 9 subtests**, zero failed/skipped. Existing **15 Playwright checks** and **6 new workflow checks** pass. Synthetic seeded-transcript export verified as **1080×1920 H.264/AAC**, actual **NVENC** encoding. Compilation/dependency/diff checks and 18 preserved-data/14 playbook hashes pass.
+- No fresh Whisper/model download or full episode analysis. Fresh transcription, real-footage caption accuracy, audible language and perceptual sync remain **unverified**. The failed 2B model gate remains closed. Main and all original data remain untouched.
+- [Windows integration evidence and limits](audit-integration-report.md) · [Supplied audit, including its original Linux results](clipping-workflow-audit.md).
+
 ## Universal recordings — source profiles and overlap deduplication (2026-11-14)
 
 - Branch `codex/universal-recordings` from verified playbook tip `37cd8f379326c781bea8d939c979a1470c217577`. Inspected both requested repositories at pinned revisions; independently reused Clipper's existing renderer and selection helpers. No reference code, cloud services or packages installed.

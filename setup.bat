@@ -29,7 +29,12 @@ if errorlevel 1 (
     exit /b 1
 )
 python -c "import tkinter; print('Tkinter: available')" 2>nul || echo Tkinter is missing from this Python installation.
-python -c "import faster_whisper; print('Faster-Whisper: available; the small model downloads on first run')" 2>nul
+echo Optional caption setup: download the free Whisper small model once.
+choice /c YN /n /m "Download Whisper now? [Y/N] "
+if not errorlevel 2 (
+    python browser_preview.py --setup-whisper
+    if errorlevel 1 echo Whisper setup failed. You can retry later or create clips with captions set to None.
+)
 python -c "import ctranslate2; print('CTranslate2 CUDA devices:', ctranslate2.get_cuda_device_count())" 2>nul || echo CTranslate2 GPU check failed; processing will use CPU fallback.
 python diagnostics.py
 echo Setup finished. Run run.bat to launch the application.

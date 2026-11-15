@@ -138,16 +138,20 @@ def load_review(source, cache_folder, output, audio_index, templates):
 
 
 def preview(source, folder, proposal, start, end, info, audio_index, cancel):
+    return interval_preview(source, folder, proposal["source_hash"], start, end, info, audio_index, cancel)
+
+
+def interval_preview(source, folder, source_identity, start, end, info, audio_index, cancel):
     import clipper
     from evaluation.build_review_board import preview_command, validate_preview
     start, end = float(start), float(end)
     if not all(map(math.isfinite, (start, end))) or not 0 <= start < end <= info.duration or end-start > 180:
         raise ValueError("Choose an interval inside the source, up to 180 seconds for a review preview")
-    identity = hashlib.sha256(json.dumps([proposal["source_hash"], audio_index, start, end]).encode()).hexdigest()[:20]
+    identity = hashlib.sha256(json.dumps([source_identity, audio_index, start, end]).encode()).hexdigest()[:20]
     folder.mkdir(parents=True, exist_ok=True)
     target = folder / f"preview-{identity}.mp4"
-    audio = next(s for s in info.streams if s["index"] == audio_index and s["type"] == "audio")
-    language = audio.get("language")
+    audio = next((s for s in info.streams if s["index"] == audio_index and s["type"] == "audio"), None)
+    language = audio.get("language") if audio else None
     if target.exists():
         cached = validate_preview(target, audio_index, language, maximum_duration=end-start+.2)
         if abs(cached["duration"]-(end-start)) > .2:

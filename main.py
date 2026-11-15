@@ -14,7 +14,7 @@ import tkinter as tk
 from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 
-from clipper import parse_time_ranges, process_video, probe, scan_videos
+from clipper import _manifest_clip_path, parse_time_ranges, process_video, probe, scan_videos
 from diagnostics import collect_diagnostics
 from model_manager import ModelManager, gpu_memory_usage
 from vision import VisionModelManager, vision_installation_status
@@ -48,7 +48,7 @@ def _whisper_model_cached(model_size: str) -> bool:
     try:
         register_cuda_dll_directories()
         from faster_whisper.utils import download_model
-        return Path(download_model(model_size, local_files_only=True)).is_dir()
+        return (Path(download_model(model_size, local_files_only=True)) / "model.bin").is_file()
     except Exception:
         return False
 
@@ -916,7 +916,7 @@ class ClippingApp(tk.Tk):
             return
         for index, clip in enumerate(data.get("clips", [])):
             filename = clip.get("filename")
-            if not isinstance(filename, str) or Path(filename).name != filename:
+            if _manifest_clip_path(folder, filename) is None:
                 continue
             iid = f"clip-{index + 1}"
             self.review_items[iid] = {**clip, "folder": folder}

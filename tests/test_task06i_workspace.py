@@ -193,7 +193,10 @@ class IsolationTests(unittest.TestCase):
     def test_shortcuts_do_not_capture_text_entry_input(self):
         from review_workspace.window import ReviewWindow
 
-        root = tk.Tk()
+        try:
+            root = tk.Tk()
+        except tk.TclError as exc:
+            self.skipTest(f"Tk desktop unavailable: {exc}")
         self.addCleanup(root.destroy)
         entry = tk.Entry(root)
         window = ReviewWindow.__new__(ReviewWindow)
