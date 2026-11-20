@@ -547,10 +547,13 @@ def detect_activity_regions(duration: float, motion: list[float], audio: list[fl
 
 def extract_speech_regions(words: list[Word], max_pause: float = 1.15) -> list[dict]:
     """Group timestamped words into sentence/pause-delimited dialogue units."""
+    def sentence_end(word):
+        return word.text.rstrip().rstrip('"\'”’»」』）)').endswith((".", "?", "!", "。", "？", "！", "।", "؟"))
+
     valid = _valid_words(words)
     units, current = [], []
     for word in valid:
-        boundary = current and (word.start - current[-1].end > max_pause or current[-1].text.rstrip().endswith((".", "?", "!")))
+        boundary = current and (word.start - current[-1].end > max_pause or sentence_end(current[-1]))
         if boundary:
             units.append(current)
             current = []
@@ -558,7 +561,7 @@ def extract_speech_regions(words: list[Word], max_pause: float = 1.15) -> list[d
     if current:
         units.append(current)
     return [{"start": float(unit[0].start), "end": float(unit[-1].end),
-             "word_count": len(unit), "complete_sentence": unit[-1].text.rstrip().endswith((".", "?", "!"))}
+             "word_count": len(unit), "complete_sentence": sentence_end(unit[-1])}
             for unit in units]
 
 
@@ -639,11 +642,17 @@ def generate_candidates(duration: float, motion: list[float], audio: list[float]
             raise InterruptedError("Processing cancelled")
         end_index = index
         while end_index < len(dialogue):
+            if end_index > index and dialogue[end_index]["start"] - dialogue[end_index - 1]["end"] > max(1.15, context_margin):
+                break
             phrase_end = dialogue[end_index]["end"]
             raw_start = max(0.0, unit["start"] - min(2.5, context_margin))
-            if index and unit["start"] - dialogue[index - 1]["end"] <= context_margin:
-                raw_start = min(raw_start, dialogue[index - 1]["start"])
             raw_end = min(duration, phrase_end + 2.5)
+            if index:
+                previous = dialogue[index - 1]
+                if unit["start"] - previous["end"] <= context_margin and raw_end - previous["start"] <= maximum:
+                    raw_start = min(raw_start, previous["start"])
+                else:
+                    raw_start = max(raw_start, previous["end"])
             if raw_end - raw_start > maximum:
                 break
             if raw_end - raw_start >= minimum:
@@ -666,7 +675,8 @@ def refine_clip_boundaries(candidate: dict, duration: float, words: list[Word], 
     start_unit = next((u for u in units if u["start"] < start < u["end"]), None)
     end_unit = next((u for u in units if u["start"] < end < u["end"]), None)
     if not start_unit:
-        start_unit = next((u for u in reversed(units) if u["end"] <= start and start - u["end"] <= context_margin), None)
+        start_unit = next((u for u in reversed(units) if u["end"] <= start and start - u["end"] <= context_margin
+                           and end - u["start"] <= max_length), None)
     if not end_unit:
         end_unit = next((u for u in units if end <= u["end"] and u["end"] - end <= context_margin), None)
     if start_unit:

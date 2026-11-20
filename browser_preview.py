@@ -281,7 +281,8 @@ class Handler(BaseHTTPRequestHandler):
         mode = body.get("caption_mode")
         if mode == "Release subtitles":
             key = hashlib.sha256(str(source).casefold().encode()).hexdigest()[:20]
-            cues = release_cues(prepare_structure(source, ANALYSIS_CACHE / key))["cues"]
+            profile = validate_profile(body.get("source_profile", "general"))
+            cues = release_cues(prepare_structure(source, ANALYSIS_CACHE / key, source_profile=profile))["cues"]
             return {"rows": [{k: cue[k] for k in ("start", "end", "text")} for cue in cues]}
         if mode not in ("Whisper transcription", "Whisper translation to English"):
             raise ValueError("Choose Whisper or release subtitles to browse the transcript")
@@ -685,11 +686,16 @@ class LocalServer(ThreadingHTTPServer):
     daemon_threads = True
 
 
-def serve(host="127.0.0.1", port=8765):
+def serve(host="127.0.0.1", port=8765, open_browser=False):
     if host != "127.0.0.1": raise ValueError("The browser preview server must bind to loopback only.")
     server = LocalServer((host, port), Handler)
-    print(f"Clipper browser console: http://{host}:{server.server_address[1]}/", flush=True)
-    try: server.serve_forever()
+    url = f"http://{host}:{server.server_address[1]}/"
+    print(f"Clipper browser console: {url}", flush=True)
+    try:
+        if open_browser:
+            import webbrowser
+            webbrowser.open(url)
+        server.serve_forever()
     except KeyboardInterrupt: pass
     finally: server.server_close()
 
@@ -705,7 +711,7 @@ if __name__ == "__main__":
     if args.setup_whisper:
         setup_whisper()
         raise SystemExit(0)
-    if args.open_browser:
-        import webbrowser
-        threading.Timer(1, lambda: webbrowser.open(f"http://127.0.0.1:{args.port}/")).start()
-    serve(args.host, args.port)
+    try:
+        serve(args.host, args.port, args.open_browser)
+    except OSError as exc:
+        raise SystemExit(f"Could not start Clipper on port {args.port}. {exc}") from exc

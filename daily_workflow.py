@@ -4,6 +4,7 @@ from __future__ import annotations
 import hashlib
 import json
 import math
+import os
 import re
 import shutil
 import threading
@@ -159,25 +160,43 @@ def export_delivery(folder: Path, filename: str, output_root: Path):
     source = clipper._manifest_clip_path(folder, filename)
     if not clip or source is None or not source.is_file():
         raise ValueError("Choose an existing clip in the job")
-    info = clipper.probe(source)
-    expected_audio = (clip.get("render") or {}).get("audio_codec", "aac" if info.has_audio else None) is not None
-    clipper.validate_output(source, float(clip["end"])-float(clip["start"]), expected_audio,
-                            source.with_suffix(".srt"), captions_required=False)
+    render = clip.get("render") or {}
+    expected_audio = render["audio_codec"] is not None if "audio_codec" in render else clipper.probe(source).has_audio
     episode = re.sub(r'[^\w .-]', '_', Path(manifest.get("source", "episode")).stem)[:80].strip(' .') or "episode"
     destination = output_root / "Exports" / episode / folder.name
     destination.mkdir(parents=True, exist_ok=True)
     target = destination / filename
     revision = 1
-    while target.exists():
+    suffixes = (".srt", ".json", ".mp4")  # Publish the playable file last.
+    while True:
+        staging = destination / f".{target.name}.exporting"
+        try:
+            staging.mkdir()
+        except FileExistsError:
+            pass
+        else:
+            if not any(os.path.lexists(target.with_suffix(ext)) for ext in suffixes):
+                break
+            staging.rmdir()
         target = destination / f"{source.stem}_export_{revision:03}.mp4"
         revision += 1
+    staged = staging / target.name
+    published = []
     try:
         for suffix in (".mp4", ".srt"):
-            shutil.copy2(source.with_suffix(suffix), target.with_suffix(suffix))
-        clipper._write_manifest(target.with_suffix(".json"), {"source": manifest.get("source"), "job_id": folder.name,
+            shutil.copy2(source.with_suffix(suffix), staged.with_suffix(suffix))
+        clipper.validate_output(staged, float(clip["end"]) - float(clip["start"]), expected_audio,
+                                staged.with_suffix(".srt"), captions_required=bool(render.get("subtitle_cues")))
+        clipper._write_manifest(staged.with_suffix(".json"), {"source": manifest.get("source"), "job_id": folder.name,
             "clip": clip, "status": "Technically validated; rights not verified"})
+        for suffix in suffixes:
+            final = target.with_suffix(suffix)
+            staged.with_suffix(suffix).rename(final)
+            published.append(final)
     except Exception:
-        for suffix in (".mp4", ".srt", ".json"):
-            target.with_suffix(suffix).unlink(missing_ok=True)
+        for final in published:
+            final.unlink(missing_ok=True)
         raise
+    finally:
+        shutil.rmtree(staging)
     return {"folder": str(destination.resolve()), "filename": target.name}

@@ -20,7 +20,12 @@ if errorlevel 1 (
 if not exist .venv\Scripts\python.exe (
     py -3.14 -m venv .venv 2>nul || py -3.13 -m venv .venv 2>nul || py -3.12 -m venv .venv 2>nul || py -3.11 -m venv .venv
 )
-call .venv\Scripts\activate.bat
+if not exist ".venv\Scripts\python.exe" (
+    echo Could not create the project Python environment.
+    pause
+    exit /b 1
+)
+call .venv\Scripts\activate.bat || exit /b 1
 python -m pip install --upgrade pip
 python -m pip install -r requirements.txt
 if errorlevel 1 (
