@@ -28,7 +28,7 @@ Broadcast support means local recorded files; no live capture, stream ingestion 
 2. Select the desired audio track. English is selected only when metadata identifies one unambiguous English track. Listen to confirm it.
 3. Choose **Whisper transcription** for captions in the spoken language, **Whisper translation to English**, or **None** to work without a model. A suitable embedded English subtitle track is another option.
 4. Open **Find a moment and mark my own clip**. Enter a source interval, or **Load transcript**, search for a phrase, and click a matching line to fill in its times. Extend the interval to keep the context you need. **Preview interval** plays a lightweight local copy with the selected audio track. Check **Transcribe explicitly** to build a missing transcript. **Create my draft** renders your selection. **Generate up to two provisional drafts** runs the existing activity-based selector instead.
-5. Review the MP4. Edit caption rows, source trim times, placement, optional hook/context, and render quality. Click **Save & Re-render Clip**.
+5. Review the MP4. Use **Jump** beside a caption to check its timing against the video. Edit caption rows, source trim times, placement, optional hook/context, and render quality. Click **Save & Re-render Clip**. Each draft with a recorded encoder identifies GPU or CPU encoding.
 6. Click **Export delivery files**. The displayed folder contains MP4/SRT files and provenance JSON.
 7. Upload manually after checking audio, captions, framing, and publishing permissions.
 
@@ -85,6 +85,8 @@ Source media, imported episodes, completed production jobs/exports, models, the 
 New visual analysis prefers a single **NVDEC decode + CUDA resize** pass. PySceneDetect and motion scoring consume only 320×180 samples on the CPU instead of decoding the full-resolution episode twice. Whisper prefers CUDA int8_float16; final H.264 encoding prefers NVENC. Audio processing, scoring, captions and some render filters still use CPU, so CPU activity does not mean acceleration failed.
 
 The status area shows actual stage/device messages and system-wide GPU memory, decode and encode utilization. Those counters include other applications; job manifests separately record device provenance. Cached analysis/transcripts are labeled as reused and do not run inference again. In Task Manager, inspect NVIDIA **Video Decode / Video Encode / CUDA** engines rather than only the default 3D graph. Unsupported GPU decoding falls back explicitly with the reason in Processing details. `CLIPPER_VISUAL_DEVICE=cpu` is available for diagnostics.
+
+If NVDEC reports an unsupported source profile, visual analysis tries CPU decoding with CUDA resizing. Source interval previews also try hardware acceleration. Setup checks the media tools, subtitle filter and a working H.264 encoder before it reports success. See the [commercial release assessment](reports/commercial-readiness.md) for customer installation and acceptance criteria.
 
 This visual-engine update refreshes old visual-analysis caches once; transcription caches remain independent. The sampled detector may shift scene boundaries slightly, so review clips as usual.
 

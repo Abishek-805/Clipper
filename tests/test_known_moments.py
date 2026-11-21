@@ -22,6 +22,29 @@ def sample():
 
 
 class KnownMomentTests(unittest.TestCase):
+    def test_preview_preserves_gpu_encoding_when_only_decode_is_unsupported(self):
+        info = clipper.VideoInfo(60, 640, 360, 24, True, 0, [dict(index=2, type="audio", language="eng")])
+        with tempfile.TemporaryDirectory() as tmp, patch.object(clipper, "select_encoder", return_value=("h264_nvenc", "")), \
+                patch.object(clipper, "_run", side_effect=[RuntimeError("unsupported profile"), None]) as run, \
+                patch("evaluation.build_review_board.validate_preview", return_value={"duration": 4}):
+            preview(Path("episode.mkv"), Path(tmp), {"source_hash": SOURCE}, 2, 6, info, 2, threading.Event())
+            first, second = [call.args[0] for call in run.call_args_list]
+            self.assertIn("-hwaccel", first)
+            self.assertIn("scale_cuda", first[first.index("-vf") + 1])
+            self.assertNotIn("-hwaccel", second)
+            for command in (first, second):
+                self.assertIn("h264_nvenc", command)
+                self.assertIn("0:2", command)
+
+    def test_cancelled_gpu_preview_never_starts_a_software_retry(self):
+        info = clipper.VideoInfo(60, 640, 360, 24, False, 0, [])
+        with tempfile.TemporaryDirectory() as tmp, patch.object(clipper, "select_encoder", return_value=("h264_nvenc", "")), \
+                patch.object(clipper, "_run", side_effect=InterruptedError("Cancelled")) as run:
+            with self.assertRaises(InterruptedError):
+                preview(Path("episode.mkv"), Path(tmp), {"source_hash": SOURCE}, 2, 6, info, None, threading.Event())
+            run.assert_called_once()
+            self.assertEqual(list(Path(tmp).iterdir()), [])
+
     def test_text_matches_are_proposed_and_wrong_sources_ignored(self):
         proposals = sample()
         self.assertTrue(proposals)

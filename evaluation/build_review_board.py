@@ -11,18 +11,27 @@ from evaluation.anime_review import build_dataset, save_dataset, validate_datase
 
 
 def preview_command(source: Path, output: Path, start: float, duration: float,
-                    audio_stream_index: int | None, audio_language: str | None) -> list[str]:
-    command = [ffmpeg_path(), "-hide_banner", "-loglevel", "error", "-y", "-ss", f"{start:.3f}",
-               "-i", str(source), "-t", f"{duration:.3f}", "-map", "0:v:0"]
+                    audio_stream_index: int | None, audio_language: str | None, *,
+                    nvenc: bool = False, nvdec: bool = False) -> list[str]:
+    command = [ffmpeg_path(), "-hide_banner", "-loglevel", "error", "-y"]
+    if nvdec:
+        command += ["-hwaccel", "cuda", "-hwaccel_output_format", "cuda"]
+    command += ["-ss", f"{start:.3f}", "-i", str(source), "-t", f"{duration:.3f}", "-map", "0:v:0"]
     if audio_stream_index is None:
         command += ["-an"]
     else:
         command += ["-map", f"0:{audio_stream_index}", "-c:a", "aac", "-b:a", "128k"]
         if audio_language:
             command += ["-metadata:s:a:0", f"language={audio_language}"]
-    return command + ["-sn", "-dn", "-map_chapters", "-1", "-map_metadata", "-1", "-vf", "scale=640:-2,fps=12",
-                      "-c:v", "libx264", "-pix_fmt", "yuv420p", "-preset", "ultrafast", "-crf", "30",
-                      "-movflags", "+faststart", str(output)]
+    filters = "fps=12,scale_cuda=640:-2:format=nv12" if nvdec else "scale=640:-2,fps=12"
+    command += ["-sn", "-dn", "-map_chapters", "-1", "-map_metadata", "-1", "-vf", filters]
+    if nvenc:
+        command += ["-c:v", "h264_nvenc", "-preset", "p2", "-cq", "30", "-b:v", "0"]
+        if not nvdec:
+            command += ["-pix_fmt", "yuv420p"]
+    else:
+        command += ["-c:v", "libx264", "-pix_fmt", "yuv420p", "-preset", "ultrafast", "-crf", "30"]
+    return command + ["-movflags", "+faststart", str(output)]
 
 
 def validate_preview(path: Path, audio_stream_index: int | None, audio_language: str | None,

@@ -97,7 +97,12 @@ def manual_clip(source: Path, folder: Path, cache_root: Path, audio_index, start
     record.update(render=result, validation="VALIDATED")
     manifest["clips"] = [record]
     if transcription:
-        manifest.update(transcription_device=transcription.device, transcription_message=transcription.message)
+        cached = transcription.message == "transcription cache hit"
+        manifest.update(transcription_device=transcription.device, transcription_message=transcription.message,
+                        transcription_compute_type=transcription.precision,
+                        transcription_executed=transcription.device in {"cpu", "cuda"} and not cached,
+                        transcription_fallback_reason=transcription.message if transcription.outcome == "CPU_FALLBACK" and not cached else None,
+                        cache={"transcription": "reused" if cached else "not reused"})
     clipper._write_manifest(folder / "analysis.json", manifest)
     return manifest
 

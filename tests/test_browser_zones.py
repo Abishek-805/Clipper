@@ -19,12 +19,16 @@ class BrowserZonesTests(unittest.TestCase):
             job.mkdir(parents=True)
             (job / "clip_001.mp4").write_bytes(b"saved-output")
             warning = dict(label="OP", reason="Position only")
-            (job / "analysis.json").write_text(json.dumps(dict(clips=[dict(filename="clip_001.mp4", zone_warnings=[warning], reason="High motion")])) )
+            clip = dict(filename="clip_001.mp4", zone_warnings=[warning], reason="High motion",
+                        render={"encoder": "libx264", "encoder_note": "NVENC unavailable"})
+            (job / "analysis.json").write_text(json.dumps({"clips": [clip]}))
             with patch.object(browser, "OUTPUT", root), patch.object(browser, "_publish") as publish:
                 browser._open_job("example")
                 draft = publish.call_args.kwargs["report"]["drafts"][0]
                 self.assertEqual(draft["zone_warnings"], [warning])
                 self.assertEqual(draft["selection_reason"], "High motion")
+                self.assertEqual(draft["encoder"], "libx264")
+                self.assertEqual(draft["encoder_note"], "NVENC unavailable")
 
     def test_inspection_save_and_source_mismatch_are_safe(self):
         previous = dict(browser._STATE)

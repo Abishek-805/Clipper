@@ -120,6 +120,7 @@ def _open_job(job_id: str, *, finished=False, status="Opened saved job", rerende
         "media_revision": str(artifact.stat().st_mtime_ns),
         "technical_validation": c.get("validation", "PROVISIONAL"), "caption_position": c.get("caption_position"),
         "overlays": c.get("overlays", {}), "render_preset": (c.get("render") or {}).get("render_preset", "fast"),
+        "encoder": (c.get("render") or {}).get("encoder"), "encoder_note": (c.get("render") or {}).get("encoder_note"),
         "zone_warnings": c.get("zone_warnings", []), "selection_reason": c.get("reason", ""),
         "glossary_replacements": (c.get("render") or {}).get("glossary_replacements", [])}
         for c in report.get("clips", []) if (artifact := _manifest_clip_path(folder, c.get("filename"))) is not None
@@ -221,6 +222,7 @@ def _execute_job(source: Path, audio_index: int | None, caption_mode: str, job_i
             "job_output_directory": str(job_dir), "failure": failure,
             "drafts": [{"filename": c.get("filename"), "srt": Path(c.get("filename", "")).with_suffix(".srt").name,
                         "start": c.get("start"), "end": c.get("end"),
+                        "encoder": (c.get("render") or {}).get("encoder"), "encoder_note": (c.get("render") or {}).get("encoder_note"),
                         "zone_warnings": c.get("zone_warnings", []), "selection_reason": c.get("reason", ""),
                         "technical_validation": c.get("validation", "not validated"),
                         "glossary_replacements": (c.get("render") or {}).get("glossary_replacements", []),

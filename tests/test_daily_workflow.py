@@ -6,10 +6,34 @@ from pathlib import Path
 from unittest.mock import patch
 
 import clipper
+from diagnostics import export_setup_errors
 from daily_workflow import byte_range, interval, manual_clip, restore_version, export_delivery
 from tests import test_rerender as fixtures
 
 class DailyWorkflowTests(unittest.TestCase):
+    def test_export_setup_accepts_cpu_and_identifies_missing_requirements(self):
+        checks = [{"name": name, "status": "available"} for name in
+                  ("FFmpeg", "FFprobe", "Subtitle filter", "OpenCV", "PySceneDetect")]
+        report = {"checks": checks, "encoders": {"libx264": True, "h264_nvenc": False}}
+        self.assertEqual(export_setup_errors(report), [])
+        checks[1]["status"] = "missing"
+        report["encoders"]["libx264"] = False
+        errors = export_setup_errors(report)
+        self.assertIn("FFprobe", errors)
+        self.assertTrue(any("H.264" in error for error in errors))
+
+    def test_manual_cached_transcript_preserves_origin_without_claiming_inference(self):
+        cached = clipper.TranscriptionResult("en", [], "no_speech", "cuda", "int8_float16", "transcription cache hit")
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source, _, _ = fixtures.SingleClipRerenderTests().make_job(root)
+            with patch("daily_workflow.whisper_transcript", return_value=cached), patch.object(clipper, "render", return_value={}):
+                result = manual_clip(source, root / "manual", root / "cache", 1, 0, 1,
+                                     "Whisper transcription", False, threading.Event())
+            self.assertFalse(result["transcription_executed"])
+            self.assertEqual(result["cache"]["transcription"], "reused")
+            self.assertEqual(result["transcription_device"], "cuda")
+
     def test_http_byte_ranges(self):
         for header, expected in [(None,(0,99,200)),('bytes=10-19',(10,19,206)),('bytes=90-',(90,99,206)),('bytes=-10',(90,99,206)),('bytes=-1000',(0,99,206))]:
             self.assertEqual(expected,byte_range(header,100))

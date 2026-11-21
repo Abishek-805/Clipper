@@ -26,7 +26,7 @@ from editorial import (QUALITY_FLOOR, apply_assessment, assess_candidate, local_
 from model_manager import ModelManager
 from vision import (VisionModelManager, extract_candidate_frames, read_semantic_cache,
                     semantic_cache_key, write_semantic_cache)
-from gpu_analysis import visual_signals as _gpu_visual_signals
+from gpu_analysis import UnsupportedGpuDecode, visual_signals as _gpu_visual_signals
 from structure import VERSION as STRUCTURE_VERSION, prepare_structure, zone_check
 from dialogue import choose_dialogue, release_cues, clipped_cues, build_units, save_units
 
@@ -257,7 +257,11 @@ def _visual_analysis(path: Path, info: VideoInfo, cancel: threading.Event, progr
     reason = "CPU visual analysis requested"
     if os.getenv("CLIPPER_VISUAL_DEVICE", "auto") != "cpu":
         try:
-            return _gpu_visual_signals(path, info.duration, info.fps, cancel, progress)
+            try:
+                return _gpu_visual_signals(path, info.duration, info.fps, cancel, progress)
+            except UnsupportedGpuDecode as exc:
+                progress(f"NVDEC cannot decode this stream · {exc}")
+                return _gpu_visual_signals(path, info.duration, info.fps, cancel, progress, software_decode=True)
         except InterruptedError:
             raise
         except Exception as exc:

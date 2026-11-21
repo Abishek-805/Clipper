@@ -1,5 +1,9 @@
 # Clipper implementation status
 
+## Commercial workflow and GPU verification (2026-11-21)
+
+Validated a fresh real-media automatic export and a cache-reuse export on the 4 GB RTX laptop. Source interval previews use hardware acceleration where supported. The editor exposes the recorded encoder and supports jumping to an edited caption cue. The full suite passed 357 tests and 9 subtests. Headless Edge passed 17 workflow checks. Clean-machine distribution and customer-footage acceptance remain open. [Measurements and release gates](commercial-readiness.md)
+
 ## Supplied workflow audit — integrated and Windows-tested (2026-11-15)
 
 - Branch `codex/audit-workflow-fixes` from main `4bdb693f760b8b49cd7bc6c27ecf8209a2236159`. Imported the reviewed 18-file ZIP delta plus its audit report; source ZIP hash and provenance are recorded. The claimed upstream commit is not verifiable from a ZIP without Git history.

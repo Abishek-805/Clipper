@@ -15,6 +15,12 @@ class FakeDecoder:
  def terminate(self):self.done=True
 
 class GpuAnalysisTests(unittest.TestCase):
+ def test_unsupported_decode_retries_with_cpu_decode_and_cuda_resize(self):
+  info=clipper.VideoInfo(2,320,180,24,False,0)
+  result=([0.0],[], "CPU decode + CUDA resize", {"device":"cpu-decode-cuda-resize"})
+  with patch.dict('os.environ',{'CLIPPER_VISUAL_DEVICE':'auto'}), patch('clipper._gpu_visual_signals',side_effect=[gpu_analysis.UnsupportedGpuDecode("unsupported profile"),result]) as analyze:
+   self.assertEqual(result,clipper._visual_analysis(Path('sample.mp4'),info,threading.Event(),lambda _:None))
+   self.assertTrue(analyze.call_args.kwargs['software_decode'])
  def test_one_gpu_stream_produces_motion_and_timestamped_cuts(self):
   import numpy as np
   red=np.zeros((180,320,3),dtype=np.uint8);red[:,:,2]=255

@@ -104,7 +104,8 @@ def collect_diagnostics(probe_encoders: bool = True) -> dict:
 
     ffmpeg, ffprobe = ffmpeg_path(), ffprobe_path()
     add("FFmpeg", "available" if ffmpeg else "missing", ffmpeg or "Install FFmpeg; it is required for analysis and rendering")
-    add("FFprobe", "available" if ffprobe else "missing", ffprobe or "Install FFprobe beside FFmpeg; it is required to verify output")
+    probe_ok = bool(ffprobe and _run([ffprobe, "-version"]).returncode == 0)
+    add("FFprobe", "available" if probe_ok else "missing", ffprobe if probe_ok else "Install a working FFprobe beside FFmpeg to verify output")
     encoders: dict[str, bool] = {}
     if ffmpeg:
         result = _run([ffmpeg, "-hide_banner", "-encoders"])
@@ -153,6 +154,16 @@ def format_diagnostics(report: dict) -> str:
     return "\n".join(f"{c['status'].upper():<11} {c['name']}: {c['detail']}" for c in report["checks"])
 
 
+def export_setup_errors(report: dict) -> list[str]:
+    available = {check["name"] for check in report["checks"] if check["status"] == "available"}
+    missing = [name for name in ("FFmpeg", "FFprobe", "Subtitle filter", "OpenCV", "PySceneDetect") if name not in available]
+    if not any(report["encoders"].values()):
+        missing.append("a working H.264 encoder (NVENC or libx264)")
+    return missing
+
+
 if __name__ == "__main__":
     report = collect_diagnostics()
     print(json.dumps(report, indent=2) if "--json" in sys.argv else format_diagnostics(report))
+    if "--check-export" in sys.argv and (missing := export_setup_errors(report)):
+        sys.exit("Setup incomplete. Required for clipping: " + ", ".join(missing))

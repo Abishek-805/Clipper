@@ -12,19 +12,26 @@ from pathlib import Path
 from diagnostics import ffmpeg_path
 
 
-def visual_signals(path: Path, duration: float, source_fps: float, cancel: threading.Event, progress):
+class UnsupportedGpuDecode(RuntimeError):
+    """FFmpeg recognized CUDA, but the decoder cannot handle this stream."""
+
+
+def visual_signals(path: Path, duration: float, source_fps: float, cancel: threading.Event, progress, *, software_decode=False):
     import cv2
     import numpy as np
     from scenedetect import ContentDetector, FrameTimecode
 
     width, height, sample_fps = 320, 180, 8
-    command = [ffmpeg_path(), "-v", "error", "-hwaccel", "cuda", "-hwaccel_output_format", "cuda",
+    decode_args = [] if software_decode else ["-hwaccel", "cuda", "-hwaccel_output_format", "cuda"]
+    upload = "format=nv12,hwupload_cuda," if software_decode else ""
+    decoder = "CPU decode" if software_decode else "GPU NVDEC decode"
+    command = [ffmpeg_path(), "-v", "error", *decode_args,
         "-i", str(path), "-t", str(duration), "-map", "0:v:0", "-an", "-sn", "-dn",
-        "-vf", "fps=8:start_time=0,scale_cuda=320:180:format=nv12,hwdownload,format=nv12,format=bgr24",
+        "-vf", f"fps=8:start_time=0,{upload}scale_cuda=320:180:format=nv12,hwdownload,format=nv12,format=bgr24",
         "-f", "rawvideo", "-pix_fmt", "bgr24", "-"]
     if cancel.is_set():
         raise InterruptedError("Processing cancelled")
-    progress("Visual analysis · GPU NVDEC decode + CUDA resize · CPU scene/motion on 320×180 samples")
+    progress(f"Visual analysis · {decoder} + CUDA resize · CPU scene/motion on 320×180 samples")
     motion = [0.0] * max(1, math.ceil(duration))
     cuts, index, sampled, previous = [], 0, 0, None
     # Preserve the old 15-source-frame minimum interval in seconds at the new sample rate.
@@ -62,12 +69,14 @@ def visual_signals(path: Path, duration: float, source_fps: float, cancel: threa
                     sampled += 1
                 index += 1
                 if index % (sample_fps * 10) == 0:
-                    progress(f"Visual analysis · GPU NVDEC · {min(duration, index/sample_fps):.0f}/{duration:.0f}s")
+                    progress(f"Visual analysis · {decoder} + CUDA resize · {min(duration, index/sample_fps):.0f}/{duration:.0f}s")
             code = process.wait(timeout=10)
             if code or not index:
-                errors.seek(0, 2)
-                errors.seek(max(0, errors.tell()-2000))
-                raise RuntimeError(errors.read().decode(errors="replace").strip() or "NVDEC decoded no frames")
+                errors.seek(0)
+                message = errors.read(2000).decode(errors="replace").strip()
+                if not index and not software_decode and "Hardware is lacking required capabilities" in message:
+                    raise UnsupportedGpuDecode(message.splitlines()[0])
+                raise RuntimeError(message or "Visual analysis decoded no frames")
             if index < max(1, int(duration*sample_fps)-sample_fps*2):
                 raise RuntimeError("NVDEC ended before the complete source interval was analyzed")
         finally:
@@ -77,8 +86,8 @@ def visual_signals(path: Path, duration: float, source_fps: float, cancel: threa
                 process.wait()
             process.stdout.close()
             watcher.join(timeout=1)
-    stats = {"device": "cuda-nvdec", "resize_device": "cuda", "measurement_device": "cpu",
-        "frames_decoded": index, "frame_count_basis": "sampled frames downloaded; source decoding remains on NVDEC",
+    stats = {"device": "cpu-decode-cuda-resize" if software_decode else "cuda-nvdec", "resize_device": "cuda", "measurement_device": "cpu",
+        "frames_decoded": index, "frame_count_basis": f"sampled frames downloaded after {decoder}",
         "frames_sampled": sampled, "scene_sample_fps": sample_fps, "sample_rate_fps": 2,
         "sample_resolution": [width, height], "seconds": round(time.perf_counter()-started, 3), "command": command}
-    return motion, sorted(set(cuts)), f"{len(cuts)} cut(s) found · NVDEC/CUDA samples at 8 fps", stats
+    return motion, sorted(set(cuts)), f"{len(cuts)} cut(s) found · {decoder} + CUDA resize at 8 fps", stats

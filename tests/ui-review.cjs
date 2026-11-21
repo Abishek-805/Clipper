@@ -16,12 +16,21 @@ const {chromium}=require(process.env.CLIPPER_PLAYWRIGHT_MODULE||'playwright');
  await page.goto(base);await page.locator('.caption-row textarea').first().waitFor();
  await page.waitForFunction(()=>document.querySelector('#jobs option')?.value&&document.querySelector('#jobs option').textContent!=='Loading saved jobs…');
  assert((await page.locator('#gpu').innerText()).includes('System GPU'));
+ assert.deepEqual(await page.evaluate(()=>[
+  encoderSummary({encoder:'h264_nvenc'}),
+  encoderSummary({encoder:'libx264',encoder_note:'NVENC unavailable'}),
+  encoderSummary({})
+ ]),['Encoded on GPU · NVIDIA NVENC','Encoded on CPU · libx264 · NVENC unavailable','']);
  await page.waitForFunction(()=>!document.querySelector('#episode-panel').open);
  assert.equal(await page.locator('#episode-panel').getAttribute('open'),null);
  const draftTop=await page.locator('.draft').first().evaluate(e=>e.getBoundingClientRect().top);
  assert(draftTop<600,`Draft below fold: ${draftTop}`);
  const filename=await page.locator('.draft-heading').first().innerText();assert(filename.includes('Draft 1'));
  await page.locator('.draft video').first().evaluate(async v=>{v.muted=true;await v.play();await new Promise(r=>setTimeout(r,250));v.pause()});
+ const cue=page.locator('.caption-row').nth(1);
+ const cueTime=Number(await cue.getByRole('spinbutton',{name:'Cue start seconds'}).inputValue());
+ await cue.getByRole('button',{name:'Jump to caption 2',exact:true}).press('Enter');
+ await page.waitForFunction(t=>{const v=document.querySelector('.draft video');return v.paused&&!v.seeking&&Math.abs(v.currentTime-t)<0.05},cueTime);
  await page.screenshot({path:'output/playwright/after-desktop.png',fullPage:true});
  await page.locator('.draft').first().scrollIntoViewIfNeeded();await page.screenshot({path:'output/playwright/editor-desktop.png'});
  const caption=page.getByRole('textbox',{name:'Caption text',exact:true}).first();
@@ -67,7 +76,7 @@ const {chromium}=require(process.env.CLIPPER_PLAYWRIGHT_MODULE||'playwright');
  assert.equal(await page.locator('.preview-panel').first().evaluate(e=>getComputedStyle(e).position),'static');
  await page.setViewportSize({width:1440,height:1000});assert.equal(await page.locator('.preview-panel').first().evaluate(e=>getComputedStyle(e).position),'sticky');
  assert.deepEqual(errors,[]);assert.deepEqual(consoleErrors,[]);
- const checks=['source profile choices and idle polling','saved-job layout','desktop screenshot','caption multiline edit','poll preservation','reload recovery','new episode focus','browser file chooser','cancelled chooser','unsupported file rejection','track inspection','idle startup','mobile overflow','responsive preview','system GPU telemetry'];if(newSourceImported)checks.push('new local import');
+ const checks=['source profile choices and idle polling','saved-job layout','desktop screenshot','caption multiline edit','poll preservation','reload recovery','new episode focus','browser file chooser','cancelled chooser','unsupported file rejection','track inspection','idle startup','mobile overflow','responsive preview','system GPU telemetry','keyboard caption seek','saved encoder labels'];if(newSourceImported)checks.push('new local import');
  fs.writeFileSync('output/playwright/result.json',JSON.stringify({playwright:require(path.join(process.env.CLIPPER_PLAYWRIGHT_MODULE||'playwright','package.json')).version,draftTop,processingRequests,pageErrors:errors,consoleErrors,checks},null,2));
  console.log(`PASS: ${checks.length} Playwright UI checks; no page/console errors or processing requests.`);await context.close();
  }finally{await browser.close()}

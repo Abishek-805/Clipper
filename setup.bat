@@ -41,6 +41,11 @@ if not errorlevel 2 (
     if errorlevel 1 echo Whisper setup failed. You can retry later or create clips with captions set to None.
 )
 python -c "import ctranslate2; print('CTranslate2 CUDA devices:', ctranslate2.get_cuda_device_count())" 2>nul || echo CTranslate2 GPU check failed; processing will use CPU fallback.
-python diagnostics.py
+python diagnostics.py --check-export
+if errorlevel 1 (
+    echo Fix the missing requirements above, then run setup.bat again.
+    pause
+    exit /b 1
+)
 echo Setup finished. Run run.bat to launch the application.
 pause

@@ -4,6 +4,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 import hashlib
 import json
+import logging
 import math
 from pathlib import Path
 import re
@@ -160,7 +161,20 @@ def interval_preview(source, folder, source_identity, start, end, info, audio_in
     with tempfile.NamedTemporaryFile(suffix=".mp4", dir=folder, delete=False) as handle:
         temporary = Path(handle.name)
     try:
-        clipper._run(preview_command(source, temporary, start, end-start, audio_index, language), cancel)
+        encoder, _ = clipper.select_encoder()
+        # Some sources (including H.264 High 10) can use NVENC but cannot use NVDEC.
+        paths = [(True, True), (True, False), (False, False)] if encoder == "h264_nvenc" else [(False, False)]
+        for nvenc, nvdec in paths:
+            try:
+                command = preview_command(source, temporary, start, end-start, audio_index, language,
+                                          nvenc=nvenc, nvdec=nvdec)
+                clipper._run(command, cancel)
+                break
+            except RuntimeError as exc:
+                if not nvenc:
+                    raise
+                logging.getLogger(__name__).warning("Preview acceleration failed (NVDEC=%s, NVENC=%s): %s",
+                                                    nvdec, nvenc, exc)
         validation = validate_preview(temporary, audio_index, language, maximum_duration=end-start+.2)
         if abs(validation["duration"]-(end-start)) > .2:
             raise ValueError("Review preview duration differs from the requested interval")
